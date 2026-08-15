@@ -1,0 +1,8 @@
+# 工作区级缓存与临时文件（Go/Flutter 构建缓存、冒烟测试数据）
+/.cache/
+/.tmp/
+
+# 系统
+.DS_Store
+Thumbs.db
+*.log

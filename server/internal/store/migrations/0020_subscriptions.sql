@@ -1,0 +1,20 @@
+CREATE TABLE subscriptions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id     INTEGER NOT NULL,
+    external_source TEXT NOT NULL DEFAULT 'tmdb',
+    media_type      TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    year            INTEGER NOT NULL DEFAULT 0,
+    poster_url      TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'watching',
+    auto_rule_id    INTEGER NOT NULL DEFAULT 0,
+    last_search_at  TIMESTAMP,
+    search_count    INTEGER NOT NULL DEFAULT 0,
+    max_searches    INTEGER NOT NULL DEFAULT 12,
+    result_source   TEXT NOT NULL DEFAULT '',
+    result_account_id INTEGER NOT NULL DEFAULT 0,
+    result_path     TEXT NOT NULL DEFAULT '',
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(external_id, external_source)
+);

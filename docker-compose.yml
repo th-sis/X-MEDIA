@@ -1,0 +1,25 @@
+services:
+  xmedia:
+    build: ./server
+    container_name: xmedia
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - TZ=Asia/Shanghai
+      - PANSOU_URL=http://pansou:8888
+    depends_on:
+      - pansou
+    volumes:
+      - ./server/data:/app/data
+      - ./server/strm:/app/strm
+
+  pansou:
+    image: ghcr.io/fish2018/pansou:latest
+    container_name: pansou
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+    # 如需代理访问 TG：
+    # environment:
+    #   - PROXY=socks5://host.docker.internal:1080
