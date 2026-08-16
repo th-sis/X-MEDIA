@@ -16,10 +16,11 @@ const tmdbImageBase = "https://image.tmdb.org/t/p/w500"
 
 // Service TMDB/Bangumi 元数据代理。
 type Service struct {
-	configs domain.ConfigRepository
-	library domain.MediaLibraryRepository
-	client  *http.Client
-	base    string
+	configs    domain.ConfigRepository
+	library    domain.MediaLibraryRepository
+	client     *http.Client
+	base       string
+	protectors LRUProtectors
 }
 
 func NewService(configs domain.ConfigRepository, library domain.MediaLibraryRepository) *Service {

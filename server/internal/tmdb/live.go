@@ -226,6 +226,8 @@ func (s *Service) detailLive(ctx context.Context, externalID int64, mediaType st
 			CachedAt:       time.Now(),
 		}
 		_, _ = s.library.Upsert(ctx, m)
+		// [A4] §15.2 LRU：缓存写入后异步检查淘汰
+		go s.MaybeEvict(context.Background())
 	}
 	return det, nil
 }

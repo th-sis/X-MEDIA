@@ -89,6 +89,7 @@ type FavoriteRepository interface {
 	Add(ctx context.Context, f *Favorite) (int64, error)
 	Remove(ctx context.Context, externalID int64, source string) error
 	List(ctx context.Context) ([]*Favorite, error)
+	// Exists 判断该内容是否被收藏（media_library LRU 保护检查，§15.2）。
 	Exists(ctx context.Context, externalID int64, source string) (bool, error)
 }
 

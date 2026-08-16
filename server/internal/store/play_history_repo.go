@@ -11,8 +11,8 @@ type playHistoryRepo struct{ db *DB }
 
 func scanPlayHistory(sc interface{ Scan(...any) error }) (*domain.PlayHistory, error) {
 	var (
-		h       domain.PlayHistory
-		played  sql.NullString
+		h      domain.PlayHistory
+		played sql.NullString
 	)
 	err := sc.Scan(&h.ID, &h.ExternalID, &h.ExternalSource, &h.MediaType, &h.Title,
 		&h.PosterURL, &h.SourceType, &h.Season, &h.Episode, &h.PositionMs, &h.DurationMs, &played)

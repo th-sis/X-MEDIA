@@ -37,6 +37,12 @@ type xmediaBundle struct {
 
 func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *logx.Manager) *xmediaBundle {
 	tmdbSvc := tmdb.NewService(st.store.Configs, st.store.MediaLibrary)
+	// [A4] §15.2 LRU 淘汰保护源（收藏/订阅/播放记录）
+	tmdbSvc.SetLRUProtectors(tmdb.LRUProtectors{
+		Favorites:     st.store.Favorites,
+		Subscriptions: st.store.Subscriptions,
+		PlayHistory:   st.store.PlayHistory,
+	})
 	mediaSvc := media.NewService(media.Options{
 		PlayHistory:   st.store.PlayHistory,
 		Favorites:     st.store.Favorites,
