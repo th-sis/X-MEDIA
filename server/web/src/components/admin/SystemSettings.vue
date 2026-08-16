@@ -26,7 +26,6 @@ import SectionTabBar from "@/components/admin/SectionTabBar.vue";
 import SettingsCard from "@/components/admin/SettingsCard.vue";
 import SettingsRow from "@/components/admin/SettingsRow.vue";
 import SettingsHelpTooltip from "@/components/admin/SettingsHelpTooltip.vue";
-import ApiKeySettings from "@/components/admin/ApiKeySettings.vue";
 import { isCacheSettingKey } from "@/constants/cacheSettings";
 import { getSkinPref, previewSkin, restoreSavedSkin, setSkinPref, type SkinPref } from "@/utils/theme";
 import "@/styles/admin-shared.css";
@@ -44,7 +43,6 @@ const emit = defineEmits<{ "password-updated": []; "admin-ui-updated": [] }>();
 const SECURITY_TAB = "security";
 const HOMEPAGE_TAB = "homepage";
 const SERVICE_TAB = "services";
-const API_KEYS_TAB = "apiKeys";
 
 const SKIN_OPTIONS: { id: SkinPref; label: string; desc: string }[] = [
   { id: "default", label: "经典主题", desc: "现行品牌风格，支持深色模式与顶栏光效。" },
@@ -98,26 +96,18 @@ const homepageForm = reactive({
   index_account_switch_mode: "dropdown" as "dropdown" | "floating",
   admin_home_return_mode: "top_icon" as "sidebar" | "top_icon",
   header_effects_enabled: true,
-  index_strm_auto_detect_enabled: true,
 });
 const homepageOriginal = reactive({
   public_index_enabled: true,
   index_account_switch_mode: "dropdown" as "dropdown" | "floating",
   admin_home_return_mode: "top_icon" as "sidebar" | "top_icon",
   header_effects_enabled: true,
-  index_strm_auto_detect_enabled: true,
 });
-const apiKeySettingsRef = ref<InstanceType<typeof ApiKeySettings> | null>(null);
-const apiKeyToolbar = reactive({ loading: true, keyCount: 0, maxKeys: 10 });
-const apiKeyAddDisabled = computed(
-  () => apiKeyToolbar.loading || apiKeyToolbar.keyCount >= apiKeyToolbar.maxKeys,
-);
 
 const tabs = computed(() => [
   { key: SECURITY_TAB, label: "账号安全" },
   { key: HOMEPAGE_TAB, label: "首页设置" },
   { key: SERVICE_TAB, label: "其他设置", disabled: props.forcePasswordChange },
-  { key: API_KEYS_TAB, label: "API 秘钥", disabled: props.forcePasswordChange },
 ]);
 
 const systemItems = computed(() => items.value.filter((it) => it.category === "system"));
@@ -144,7 +134,6 @@ const homepageDirty = computed(
     homepageForm.index_account_switch_mode !== homepageOriginal.index_account_switch_mode ||
     homepageForm.admin_home_return_mode !== homepageOriginal.admin_home_return_mode ||
     homepageForm.header_effects_enabled !== homepageOriginal.header_effects_enabled ||
-    homepageForm.index_strm_auto_detect_enabled !== homepageOriginal.index_strm_auto_detect_enabled ||
     skinDraft.value !== skinSaved.value,
 );
 
@@ -184,7 +173,7 @@ const settingsDirty = computed(
 );
 const { activeTab, setActiveTab } = useSectionTabRoute(
   SECURITY_TAB,
-  [SECURITY_TAB, HOMEPAGE_TAB, SERVICE_TAB, API_KEYS_TAB],
+  [SECURITY_TAB, HOMEPAGE_TAB, SERVICE_TAB],
   {
     beforeTabChange: async (from, to) => {
       if (props.forcePasswordChange && to !== SECURITY_TAB) return false;
@@ -198,12 +187,10 @@ const { confirmDiscardChanges } = useSettingsPageDirty(settingsDirty, revertCurr
 const isSecurityTab = computed(() => activeTab.value === SECURITY_TAB);
 const isHomepageTab = computed(() => activeTab.value === HOMEPAGE_TAB);
 const isServicesTab = computed(() => activeTab.value === SERVICE_TAB);
-const isApiKeysTab = computed(() => activeTab.value === API_KEYS_TAB);
 const accentColor = computed(() => {
   if (isSecurityTab.value) return ACCENTS[0];
   if (isHomepageTab.value) return ACCENTS[1];
   if (isServicesTab.value) return ACCENTS[2];
-  if (isApiKeysTab.value) return ACCENTS[3];
   return ACCENTS[0];
 });
 
@@ -253,7 +240,6 @@ function applySystemConfig(config: {
   index_account_switch_mode?: string;
   admin_home_return_mode?: string;
   header_effects_enabled?: boolean;
-  index_strm_auto_detect_enabled?: boolean;
 }) {
   securityForm.admin_username = config.admin_username || "admin";
   securityForm.session_timeout = String(config.session_timeout || 2);
@@ -269,8 +255,6 @@ function applySystemConfig(config: {
   homepageOriginal.admin_home_return_mode = homeReturn;
   homepageForm.header_effects_enabled = config.header_effects_enabled ?? true;
   homepageOriginal.header_effects_enabled = homepageForm.header_effects_enabled;
-  homepageForm.index_strm_auto_detect_enabled = config.index_strm_auto_detect_enabled ?? true;
-  homepageOriginal.index_strm_auto_detect_enabled = homepageForm.index_strm_auto_detect_enabled;
 }
 
 async function loadSystemConfig() {
@@ -363,7 +347,6 @@ async function saveHomepage() {
       index_account_switch_mode: homepageForm.index_account_switch_mode,
       admin_home_return_mode: homepageForm.admin_home_return_mode,
       header_effects_enabled: homepageForm.header_effects_enabled,
-      index_strm_auto_detect_enabled: homepageForm.index_strm_auto_detect_enabled,
     });
     commitSkinDraft();
     toast.success("首页设置已保存");
@@ -414,16 +397,6 @@ async function submit() {
     <SectionTabBar :model-value="activeTab" :tabs="tabs" @update:model-value="setActiveTab">
       <template #actions>
         <AppButton
-          v-if="isApiKeysTab"
-          type="button"
-          variant="primary"
-          :disabled="apiKeyAddDisabled"
-          @click="apiKeySettingsRef?.openCreate()"
-        >
-          新增秘钥
-        </AppButton>
-        <AppButton
-          v-else
           type="button"
           variant="primary"
           :disabled="!canSave || saving"
@@ -532,31 +505,6 @@ async function submit() {
               label="允许匿名访问文件列表"
               off-label="不允许"
               on-label="允许"
-            />
-          </template>
-        </SettingsRow>
-      </SettingsCard>
-
-      <SettingsCard v-if="isHomepageTab" title="STRM" :accent="accentColor">
-        <SettingsRow
-          :show-changed-badge="true"
-          :changed="homepageForm.index_strm_auto_detect_enabled !== homepageOriginal.index_strm_auto_detect_enabled"
-        >
-          <template #info>
-            <div class="settings-row__label">
-              <span>自动检测 STRM 变化</span>
-              <SettingsHelpTooltip title="自动检测 STRM 变化说明">
-                <p>开启后，管理员进入已配置 STRM 任务的目录时，会自动检测本地未生成的 STRM 与元数据，并在文件列表上方提示是否立即生成。</p>
-                <p>关闭后，进入目录不再发起检测请求，可节省开销；如需同步，请依赖 STRM 定时任务或在 STRM 管理页手动触发扫描。</p>
-              </SettingsHelpTooltip>
-            </div>
-          </template>
-          <template #control>
-            <SettingsBoolSegment
-              v-model="homepageForm.index_strm_auto_detect_enabled"
-              label="自动检测 STRM 变化"
-              off-label="关闭"
-              on-label="打开"
             />
           </template>
         </SettingsRow>
@@ -731,13 +679,6 @@ async function submit() {
           </SettingsRow>
         </SettingsCard>
       </template>
-
-      <ApiKeySettings
-        v-else-if="isApiKeysTab"
-        ref="apiKeySettingsRef"
-        :accent="accentColor"
-        @toolbar-state="Object.assign(apiKeyToolbar, $event)"
-      />
     </template>
   </div>
 </template>

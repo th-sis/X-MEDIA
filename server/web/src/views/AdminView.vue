@@ -19,17 +19,15 @@ const adminPageLoaders = {
   accounts: () => import("@/components/admin/AccountManagement.vue"),
   settings: () => import("@/components/admin/SystemSettings.vue"),
   tasks: () => import("@/components/admin/TaskManagement.vue"),
-  tools: () => import("@/components/admin/AuxToolsManagement.vue"),
+  "x-media": () => import("@/components/admin/XMediaPanel.vue"),
   "cross-transfer": () => import("@/components/admin/CrossDriveTransfer.vue"),
-  share: () => import("@/components/admin/FileShareManagement.vue"),
 };
 const DashboardManagement = defineAsyncComponent(adminPageLoaders.dashboard);
 const AccountManagement = defineAsyncComponent(adminPageLoaders.accounts);
 const SystemSettings = defineAsyncComponent(adminPageLoaders.settings);
 const TaskManagement = defineAsyncComponent(adminPageLoaders.tasks);
-const AuxToolsManagement = defineAsyncComponent(adminPageLoaders.tools);
+const XMediaPanel = defineAsyncComponent(adminPageLoaders["x-media"]);
 const CrossDriveTransfer = defineAsyncComponent(adminPageLoaders["cross-transfer"]);
-const FileShareManagement = defineAsyncComponent(adminPageLoaders.share);
 import { logout, fetchSystemConfig } from "@/api/auth";
 import { useAuthStore } from "@/stores/auth";
 import { provideAdminPageContext } from "@/composables/useAdminLoadingBar";
@@ -45,9 +43,8 @@ const nav = [
   { key: "accounts", label: "存储管理", icon: "hdd" },
   { key: "settings", label: "系统设置", icon: "cogs" },
   { key: "tasks", label: "任务管理", icon: "tasks" },
-  { key: "tools", label: "辅助工具", icon: "toolbox" },
+  { key: "x-media", label: "媒体配置", icon: "clapperboard" },
   { key: "cross-transfer", label: "跨盘秒传", icon: "right-left" },
-  { key: "share", label: "文件共享", icon: "share-alt" },
 ];
 const navKeys = nav.map((n) => n.key);
 
@@ -87,7 +84,7 @@ const cachedPageComponents: Record<string, Component> = {
   dashboard: DashboardManagement,
   accounts: AccountManagement,
   tasks: TaskManagement,
-  tools: AuxToolsManagement,
+  "x-media": XMediaPanel,
 };
 const cachedPageComponent = computed(() => cachedPageComponents[page.value] ?? null);
 
@@ -197,14 +194,9 @@ watch(
   ([qPage, qTab]) => {
     const pageKey = String(qPage ?? "").trim();
     const tabKey = String(qTab ?? "").trim();
-    // 旧书签：任务管理里的刮削 → 辅助工具；聚合已下线，落到刮削页
+    // 旧书签：任务管理里的刮削/聚合 tab 已随 §13.1 裁剪下线，落到仪表盘
     if (pageKey === "tasks" && LEGACY_TASK_TOOL_TABS.has(tabKey)) {
-      const tab = tabKey === "aggregate" ? "scrape" : tabKey;
-      void router.replace({ query: { ...route.query, page: "tools", tab } });
-      return;
-    }
-    if (pageKey === "tools" && tabKey === "aggregate") {
-      void router.replace({ query: { ...route.query, page: "tools", tab: "scrape" } });
+      void router.replace({ query: { ...route.query, page: "dashboard" } });
       return;
     }
     const target = normalize(qPage);
@@ -257,7 +249,7 @@ onBeforeUnmount(() => {
     </WarningBanner>
 
     <AdminEmptyState
-      v-if="!cachedPageComponent && !['settings', 'cross-transfer', 'share'].includes(page)"
+      v-if="!cachedPageComponent && !['settings', 'cross-transfer'].includes(page)"
       icon="🚧"
       :title="`「${nav.find((n) => n.key === page)?.label}」功能开发中`"
     />
@@ -270,7 +262,6 @@ onBeforeUnmount(() => {
         @admin-ui-updated="loadAdminUiConfig"
       />
       <CrossDriveTransfer v-else-if="page === 'cross-transfer'" />
-      <FileShareManagement v-else-if="page === 'share'" />
       <component :is="cachedPageComponent" v-else-if="cachedPageComponent" :key="page" />
     </KeepAlive>
   </AdminShell>

@@ -9,12 +9,9 @@ import {
   type CacheRetentionTask,
 } from "@/api/cacheRetention";
 import { getApiErrorMessage } from "@/api/client";
-import { fetchFuseMounts, type FuseMount } from "@/api/fuse";
 import { logsApi, type LogStats } from "@/api/logs";
-import { fetchMediaOrganizeTasks, type MediaOrganizeTask } from "@/api/mediaOrganize";
 import { fetchNotifications, fetchUnreadCount, type NotificationItem } from "@/api/notifications";
 import type { Account } from "@/api/types";
-import { fetchStrmTasks, type StrmTask } from "@/api/strm";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
 import AppCardActionButton from "@/components/base/AppCardActionButton.vue";
 // 日志面板非默认 tab，按需加载,减小仪表盘首包。
@@ -42,9 +39,6 @@ const accounts = ref<Account[]>([]);
 const cacheStats = ref<CacheStats | null>(null);
 const cacheRetentionTasks = ref<CacheRetentionTask[]>([]);
 const cacheRetentionStats = ref<CacheRetentionStats | null>(null);
-const fuseMounts = ref<FuseMount[]>([]);
-const strmTasks = ref<StrmTask[]>([]);
-const organizeTasks = ref<MediaOrganizeTask[]>([]);
 const notifications = ref<NotificationItem[]>([]);
 const unreadCount = ref(0);
 const logStats = ref<LogStats | null>(null);
@@ -56,11 +50,8 @@ useAdminPageLoading("dashboard", computed(() => activeTab.value === OVERVIEW_TAB
 
 type OverviewResult =
   | Account[]
-  | StrmTask[]
   | { items: CacheRetentionTask[]; startup_remaining: number }
   | CacheRetentionStats
-  | FuseMount[]
-  | MediaOrganizeTask[]
   | CacheStats
   | { items: NotificationItem[] }
   | { count: number }
@@ -72,28 +63,14 @@ const inactiveAccountCount = computed(() => Math.max(0, accountCount.value - act
 const authErrorAccountCount = computed(() => accounts.value.filter((account) => isAccountAuthError(account)).length);
 const cooldownAccountCount = computed(() => accounts.value.filter((account) => isAccountCooldown(account)).length);
 
-const enabledStrmCount = computed(
-  () => strmTasks.value.filter((task) => isStrmTaskEnabled(task)).length,
-);
 const enabledCacheCount = computed(() => {
   if (cacheRetentionStats.value) return cacheRetentionStats.value.running;
   return cacheRetentionTasks.value.filter((task) => isCacheTaskEnabled(task)).length;
 });
-const enabledOrganizeCount = computed(
-  () => organizeTasks.value.filter((task) => isOrganizeTaskEnabled(task)).length,
-);
-const enabledTaskCount = computed(
-  () => enabledStrmCount.value + enabledCacheCount.value + enabledOrganizeCount.value,
-);
+const enabledTaskCount = computed(() => enabledCacheCount.value);
 const totalTaskCount = computed(
-  () =>
-    strmTasks.value.length +
-    (cacheRetentionStats.value?.total ?? cacheRetentionTasks.value.length) +
-    organizeTasks.value.length,
+  () => cacheRetentionStats.value?.total ?? cacheRetentionTasks.value.length,
 );
-const mountedFuseCount = computed(() => fuseMounts.value.filter((mount) => mount.state === "mounted").length);
-const totalFuseCount = computed(() => fuseMounts.value.length);
-
 const recentErrorCount = computed(() => logStats.value?.recent_unacknowledged_errors ?? 0);
 const recentErrorTotal = computed(() => logStats.value?.recent_errors ?? 0);
 const systemStatus = computed(() => {
@@ -123,13 +100,10 @@ const canJumpToErrorLogs = computed(
   () => recentErrorCount.value > 0 && authErrorAccountCount.value === 0 && cooldownAccountCount.value === 0,
 );
 
-const generatedStrmCount = computed(() => strmTasks.value.reduce((sum, task) => sum + (task.generated_count || 0), 0));
 const cacheHitRate = computed(() => `${Math.round(cacheStats.value?.hit_rate ?? 0)}%`);
 const cacheItemCount = computed(() => cacheStats.value?.total_keys ?? 0);
 const cacheSizeLabel = computed(() => formatSize(cacheStats.value?.total_size_bytes ?? 0));
 const latestCacheRefresh = computed(() => latestTime(cacheRetentionTasks.value.map((task) => task.last_refresh)));
-const latestStrmScan = computed(() => latestTime(strmTasks.value.map((task) => task.last_scan)));
-const latestOrganizeRun = computed(() => latestTime(organizeTasks.value.map((task) => task.last_run_at)));
 
 const sortedAccounts = computed(() =>
   [...accounts.value].sort((a, b) => {
@@ -152,48 +126,18 @@ const taskSummaries = computed(() => [
     tone: "blue",
     updated: formatRelativeTimeAgo(latestCacheRefresh.value, "从未刷新"),
   },
-  {
-    title: "STRM 任务",
-    icon: "fa-film",
-    count: strmTasks.value.length,
-    enabled: enabledStrmCount.value,
-    detail: `已生成 ${generatedStrmCount.value} 个播放文件`,
-    progress: taskProgress(enabledStrmCount.value, strmTasks.value.length),
-    tone: "purple",
-    updated: formatRelativeTimeAgo(latestStrmScan.value, "从未扫描"),
-  },
-  {
-    title: "目录整理",
-    icon: "fa-wand-magic-sparkles",
-    count: organizeTasks.value.length,
-    enabled: enabledOrganizeCount.value,
-    detail: organizeTaskDetail.value,
-    progress: taskProgress(enabledOrganizeCount.value, organizeTasks.value.length),
-    tone: "amber",
-    updated: formatRelativeTimeAgo(latestOrganizeRun.value, "从未执行"),
-  },
 ]);
 
-const organizeTaskDetail = computed(() => {
-  const failed = organizeTasks.value.filter((task) => (task.last_run_result?.failed ?? 0) > 0).length;
-  if (failed > 0) return `${failed} 个任务最近有失败项`;
-  const renamed = organizeTasks.value.reduce((sum, task) => sum + (task.last_run_result?.renamed ?? 0), 0);
-  return renamed > 0 ? `最近整理 ${renamed} 个条目` : "可预览后手动确认执行";
-});
-
 async function loadOverview() {
-  const firstLoad = !accounts.value.length && !strmTasks.value.length && !cacheRetentionTasks.value.length;
+  const firstLoad = !accounts.value.length && !cacheRetentionTasks.value.length;
   loading.value = firstLoad;
   refreshing.value = !firstLoad;
   loadError.value = "";
   try {
     const requests = [
       accountsApi.list(),
-      fetchStrmTasks(),
       fetchCacheRetentionTasks(),
       fetchCacheRetentionStats(),
-      fetchFuseMounts(),
-      fetchMediaOrganizeTasks(),
       fetchCacheStats(),
       fetchNotifications({ limit: 3, offset: 0 }),
       fetchUnreadCount(),
@@ -206,30 +150,21 @@ async function loadOverview() {
       accounts.value = value;
     });
     assignSettled(results[1], (value) => {
-      strmTasks.value = value;
-    });
-    assignSettled(results[2], (value) => {
       cacheRetentionTasks.value = value.items ?? [];
     });
-    assignSettled(results[3], (value) => {
+    assignSettled(results[2], (value) => {
       cacheRetentionStats.value = value;
     });
-    assignSettled(results[4], (value) => {
-      fuseMounts.value = value;
-    });
-    assignSettled(results[5], (value) => {
-      organizeTasks.value = value;
-    });
-    assignSettled(results[6], (value) => {
+    assignSettled(results[3], (value) => {
       cacheStats.value = value;
     });
-    assignSettled(results[7], (value) => {
+    assignSettled(results[4], (value) => {
       notifications.value = value.items ?? [];
     });
-    assignSettled(results[8], (value) => {
+    assignSettled(results[5], (value) => {
       unreadCount.value = value.count ?? 0;
     });
-    assignSettled(results[9], (value) => {
+    assignSettled(results[6], (value) => {
       logStats.value = value;
     });
 
@@ -291,15 +226,6 @@ function isAccountCooldown(account: Account) {
 
 function isCacheTaskEnabled(task: CacheRetentionTask): boolean {
   return normalizeStatus(task.status) === "running";
-}
-
-function isStrmTaskEnabled(task: StrmTask): boolean {
-  const status = normalizeStatus(task.status);
-  return status === "active" || status === "running";
-}
-
-function isOrganizeTaskEnabled(task: MediaOrganizeTask): boolean {
-  return normalizeStatus(task.status) !== "paused";
 }
 
 function taskProgress(enabled: number, total: number) {
@@ -471,11 +397,11 @@ onMounted(() => {
       <section class="overview-cards" aria-label="运行概况卡片">
         <article class="overview-card">
           <div class="overview-card__icon">
-            <i class="fas fa-folder-tree" />
+            <i class="fas fa-hdd" />
           </div>
           <div>
-            <strong>{{ mountedFuseCount }}/{{ totalFuseCount }}</strong>
-            <span>FUSE 挂载点</span>
+            <strong>{{ accountCount }}</strong>
+            <span>账号总数</span>
           </div>
         </article>
         <article class="overview-card">

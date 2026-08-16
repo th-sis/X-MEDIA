@@ -10,7 +10,7 @@ class AppState extends ChangeNotifier {
 
   late ApiClient api;
   WsClient? ws;
-  String backendUrl = 'http://127.0.0.1:8080';
+  String backendUrl = 'http://127.0.0.1:38088';
 
   bool loading = false;
   List<Section> sections = const [];
@@ -28,14 +28,18 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _init() async {
+    debugPrint('[XMedia] _init start, backendUrl=$backendUrl');
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getString(_kBackendUrl);
     if (saved != null && saved.isNotEmpty) {
+      debugPrint('[XMedia] loaded saved backendUrl=$saved');
       backendUrl = saved;
       api = ApiClient(backendUrl);
     }
     await _connectWs();
+    debugPrint('[XMedia] _connectWs done, calling refresh');
     await refresh();
+    debugPrint('[XMedia] refresh done, sections=${sections.length}');
   }
 
   Future<void> setBackendUrl(String url) async {
@@ -80,6 +84,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> refresh() async {
+    debugPrint('[XMedia] refresh: backendUrl=$backendUrl');
     loading = true;
     error = '';
     notifyListeners();
@@ -92,7 +97,9 @@ class AppState extends ChangeNotifier {
       sections = results[0] as List<Section>;
       continueWatching = results[1] as List<ContinueWatching>;
       capabilities = results[2] as Capabilities;
-    } catch (e) {
+      debugPrint('[XMedia] refresh ok: sections=${sections.length}, cw=${continueWatching.length}');
+    } catch (e, st) {
+      debugPrint('[XMedia] refresh FAILED: $e\n$st');
       error = e.toString();
     } finally {
       loading = false;
@@ -102,8 +109,12 @@ class AppState extends ChangeNotifier {
 
   Future<List<Section>> _safeSections() async {
     try {
-      return await api.home();
-    } catch (_) {
+      debugPrint('[XMedia] _safeSections calling home()');
+      final r = await api.home();
+      debugPrint('[XMedia] _safeSections got ${r.length} sections');
+      return r;
+    } catch (e) {
+      debugPrint('[XMedia] _safeSections failed: $e');
       return const [];
     }
   }

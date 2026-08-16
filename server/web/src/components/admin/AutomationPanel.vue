@@ -455,73 +455,10 @@
         </div>
 
         <div v-else-if="configAction" class="cfg-body">
-          <template v-if="configAction.type === 'organize'">
-            <div class="cfg-row">
-              <label>整理任务</label>
-              <AppSelect v-model="configAction.params.task_id" :options="organizeTaskOptions" placeholder="请选择整理任务" />
-            </div>
-            <div class="cfg-row">
-              <label>允许异常比例</label>
-              <div class="input-with-suffix">
-                <input v-model.number="configAction.params.max_risk_percent" type="number" class="ctrl" min="0" max="100">
-                <span>%</span>
-              </div>
-              <div class="field-tip">异常比例 =（失败数 + 异常跳过数）/ 需处理项目数；已整理、已是目标名等正常跳过不计入异常。</div>
-            </div>
-          </template>
-          <template v-else-if="configAction.type === 'strm'">
-            <div class="cfg-row">
-              <label>STRM任务</label>
-              <AppSelect v-model="configAction.params.task_id" :options="strmTaskOptions" placeholder="请选择STRM任务" @update:model-value="taskId => onStrmTaskChange(configAction, taskId)" />
-            </div>
-            <div class="cfg-row">
-              <label>执行方式</label>
-              <AppSelect v-model="configAction.params.run_mode" :options="getStrmRunModeOptions(configAction)" />
-            </div>
-          </template>
-          <template v-else-if="configAction.type === 'strm_scrape'">
-            <div class="cfg-row">
-              <label>STRM任务</label>
-              <AppSelect v-model="configAction.params.task_id" :options="strmTaskOptions" placeholder="请选择STRM任务" />
-            </div>
-            <div class="cfg-row">
-              <label>写入策略</label>
-              <AppSelect v-model="configAction.params.write_mode" :options="strmScrapeWriteModeOptions" />
-            </div>
-            <div class="cfg-row">
-              <label>联动中断条件</label>
-              <AppSelect v-model="configAction.params.failure_policy" :options="strmScrapeFailurePolicyOptions" />
-            </div>
-            <div class="field-tip">仅控制单个影片刮削失败时是否继续；配置错误、任务取消或服务异常仍会中断联动。</div>
-          </template>
-          <template v-else-if="configAction.type === 'delay'">
+          <template v-if="configAction.type === 'delay'">
             <div class="cfg-row">
               <label>等待秒数</label>
               <input v-model.number="configAction.params.seconds" type="number" class="ctrl" min="1" max="86400">
-            </div>
-          </template>
-          <template v-else-if="configAction.type === 'emby_refresh'">
-            <div class="cfg-row">
-              <label>Emby配置</label>
-              <div class="ctrl readonly-ctrl">{{ options.emby?.emby_url || '未配置 Emby 地址' }}</div>
-            </div>
-            <div class="cfg-row">
-              <label>扫描方式</label>
-              <AppSelect v-model="configAction.params.mode" :options="embyRefreshModeOptions" @update:model-value="mode => onEmbyRefreshModeChange(configAction, mode)" />
-            </div>
-            <div v-if="configAction.params.mode === 'library'" class="cfg-row">
-              <label>媒体库</label>
-              <AppSelect
-                v-model="configAction.params.library_id"
-                :options="embyLibraryOptions"
-                :disabled="embyLibrariesLoading || !options.emby?.emby_url"
-                :placeholder="embyLibrariesLoading ? '正在加载媒体库...' : '请选择媒体库'"
-                @update:model-value="libraryId => onEmbyLibraryChange(configAction, libraryId)"
-              />
-              <div class="field-tip">媒体库列表从 Emby 实时拉取，仅在配置该动作时按需加载。</div>
-              <button class="inline-link-btn" type="button" :disabled="embyLibrariesLoading || !options.emby?.emby_url" @click="ensureEmbyLibrariesLoaded(true)">
-                {{ embyLibrariesLoading ? '加载中...' : '刷新媒体库列表' }}
-              </button>
             </div>
           </template>
         </div>
@@ -587,7 +524,6 @@ import {
   updateAutomationRule,
   validateAutomationRule
 } from '../../api/automation'
-import { fetchEmbyLibraries } from '../../api/emby'
 import { formatTime } from '../../utils/format'
 import '@/styles/admin-table.css'
 
@@ -659,46 +595,6 @@ const ACTION_DEFINITIONS = {
     nodeTitle: () => '刷新目录',
     previewTitle: () => '刷新目录'
   },
-  organize: {
-    label: '整理任务',
-    optionLabel: '执行整理任务',
-    icon: 'fas fa-folder-tree',
-    desc: '生成计划并执行整理，结果会经过质量门槛判断',
-    normalize: params => ({
-      task_id: params.task_id ? String(params.task_id) : '',
-      max_risk_percent: Number(params.max_risk_percent ?? 30)
-    }),
-    canApply: action => Boolean(String(action.params.task_id || '').trim()),
-    nodeTitle: action => `整理「${findTaskLabel('organize', action.params.task_id)}」`,
-    previewTitle: action => `整理任务[${findTaskLabel('organize', action.params.task_id)}]`
-  },
-  strm: {
-    label: 'STRM任务',
-    optionLabel: '执行STRM任务',
-    icon: 'fas fa-film',
-    desc: '触发已有 STRM 任务，扫描范围遵循任务自身配置',
-    normalize: params => ({
-      task_id: params.task_id ? Number(params.task_id) : '',
-      run_mode: params.run_mode && params.run_mode !== 'auto' ? params.run_mode : 'full'
-    }),
-    canApply: action => Number(action.params.task_id || 0) > 0,
-    nodeTitle: action => `STRM「${findTaskLabel('strm', action.params.task_id)}」`,
-    previewTitle: action => `执行STRM任务[${findTaskLabel('strm', action.params.task_id)}]`
-  },
-  strm_scrape: {
-    label: '生成本地STRM元数据',
-    optionLabel: '生成本地STRM元数据',
-    icon: 'fas fa-images',
-    desc: '对该 STRM 任务输出目录执行本地元数据刮削（nfo / 海报）',
-    normalize: params => ({
-      task_id: params.task_id ? Number(params.task_id) : '',
-      write_mode: params.write_mode === 'overwrite' ? 'overwrite' : 'missing_only',
-      failure_policy: ['any_failed', 'never'].includes(params.failure_policy) ? params.failure_policy : 'all_failed'
-    }),
-    canApply: action => Number(action.params.task_id || 0) > 0,
-    nodeTitle: action => `刮削「${findTaskLabel('strm', action.params.task_id)}」`,
-    previewTitle: action => `生成本地STRM元数据[${findTaskLabel('strm', action.params.task_id)}]`
-  },
   delay: {
     label: '延迟',
     optionLabel: '延迟等待',
@@ -708,22 +604,6 @@ const ACTION_DEFINITIONS = {
     canApply: action => Number(action.params.seconds || 0) > 0,
     nodeTitle: action => `延迟 ${Number(action.params.seconds || 60)} 秒`,
     previewTitle: action => `延迟${formatDelay(action.params.seconds)}`
-  },
-  emby_refresh: {
-    label: 'Emby刷库',
-    optionLabel: 'Emby全局刷库',
-    icon: 'fas fa-server',
-    desc: '通知 Emby 扫描全部媒体库，或只扫描指定媒体库',
-    normalize: params => ({
-      mode: params.mode === 'library' ? 'library' : 'global',
-      library_id: String(params.library_id || ''),
-      library_name: String(params.library_name || '')
-    }),
-    canApply: action => Boolean(options.value.emby?.emby_url) && (
-      action?.params?.mode !== 'library' || Boolean(String(action?.params?.library_id || '').trim())
-    ),
-    nodeTitle: action => `Emby ${embyRefreshModeLabel(action)}「${embyRefreshTargetLabel(action)}」`,
-    previewTitle: action => `Emby${embyRefreshModeLabel(action)}[${embyRefreshTargetLabel(action)}]`
   }
 }
 

@@ -1,12 +1,12 @@
 /* 全局视觉令牌，主题和皮肤只覆盖变量值。 */
 :root {
-  --brand-start: #4c74df;
+  --brand-start: #6e6cf0;
   --brand-end: #02a6f0;
   --brand-gradient: linear-gradient(135deg, var(--brand-start), var(--brand-end));
   --brand-gradient-h: linear-gradient(90deg, var(--brand-start), var(--brand-end));
-  --brand-gradient-h-hover: linear-gradient(90deg, #3b5bdb, #1e88e5);
-  --brand: #4c74df;
-  --brand-strong: #3b5bdb;
+  --brand-gradient-h-hover: linear-gradient(90deg, #5b59e0, #1e88e5);
+  --brand: #6e6cf0;
+  --brand-strong: #5b59e0;
 
   --bg: #f5f7fa;
   --surface: #ffffff;

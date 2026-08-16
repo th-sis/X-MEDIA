@@ -16,10 +16,8 @@ import { filesApi } from "@/api/files";
 import type { Account, BrowserFavoriteItem, FileItem, FileNameAlignPreviewResult } from "@/api/types";
 import type { OfflineDownloadTask } from "@/types/offline-download";
 import { getApiErrorMessage } from "@/api/client";
-import { generateCurrentDirectoryStrm } from "@/api/strm";
-import { useStrmDirectoryPrompt } from "@/composables/useStrmDirectoryPrompt";
-import { fileKind } from "@/utils/fileIcon";
 import { publicApi } from "@/api/public";
+import { fileKind } from "@/utils/fileIcon";
 import AccountSelector from "./AccountSelector.vue";
 import FloatingAccountSwitcher from "./FloatingAccountSwitcher.vue";
 import BreadcrumbNav from "./BreadcrumbNav.vue";
@@ -214,20 +212,6 @@ const transferConfirmText = computed(() =>
   fileActions.transfer.action === "move" ? "移动到此目录" : "复制到此目录",
 );
 
-const strmGenerating = ref(false);
-const strmAutoDetectEnabled = ref(true);
-
-const strmPrompt = useStrmDirectoryPrompt({
-  isAdmin,
-  accountId: currentAccountId,
-  files,
-  loading,
-  refreshing,
-  enabled: strmAutoDetectEnabled,
-  getDisplayPath: getCurrentDisplayPath,
-  getParentId: () => currentParentId.value,
-});
-
 function getCurrentDisplayPath(): string {
   const parts = getCurrentBreadcrumbNameParts();
   return parts.length ? `/${parts.join("/")}` : "/";
@@ -365,67 +349,7 @@ async function handleFavoriteDrop(item: BrowserFavoriteItem) {
 }
 
 async function handleGenerateCurrentDirectoryStrm() {
-  if (!currentAccountId.value) {
-    toast.info("请先选择一个账号");
-    return;
-  }
-  if (strmGenerating.value) return;
-  strmGenerating.value = true;
-  try {
-    const result = await generateCurrentDirectoryStrm({
-      account_id: currentAccountId.value,
-      parent_id: currentParentId.value,
-      path: getCurrentDisplayPath(),
-      items: files.value.map((file) => ({
-        id: file.id,
-        name: file.name,
-        size: file.size,
-        is_dir: file.is_dir,
-      })),
-    });
-    if (
-      (result.media_count || 0) <= 0 &&
-      (result.deleted || 0) <= 0 &&
-      (result.metadata_created || 0) <= 0 &&
-      (result.metadata_uploaded || 0) <= 0 &&
-      (result.metadata_deleted || 0) <= 0
-    ) {
-      toast.info("当前目录没有需要同步的 STRM");
-      return;
-    }
-    const parts = [
-      `新增 ${result.created || 0}`,
-      `更新 ${result.updated || 0}`,
-      `删除 ${result.deleted || 0}`,
-      `已存在 ${result.skipped_existing || 0}`,
-    ];
-    if ((result.metadata_created || 0) > 0) {
-      parts.push(`元数据下载 ${result.metadata_created}`);
-    }
-    if ((result.metadata_uploaded || 0) > 0) {
-      parts.push(`元数据上传 ${result.metadata_uploaded}`);
-    }
-    if ((result.metadata_deleted || 0) > 0) {
-      parts.push(`元数据清理 ${result.metadata_deleted}`);
-    }
-    if ((result.skipped_conflict || 0) > 0) {
-      parts.push(`冲突跳过 ${result.skipped_conflict}`);
-    }
-    toast.success(`STRM 同步完成：${parts.join("，")}`);
-  } catch (error) {
-    toast.error(getApiErrorMessage(error, "当前目录 STRM 生成失败"));
-  } finally {
-    strmGenerating.value = false;
-    await strmPrompt.refreshStatus();
-  }
-}
-
-function handleConfirmStrmPrompt() {
-  void handleGenerateCurrentDirectoryStrm();
-}
-
-function handleDismissStrmPrompt() {
-  strmPrompt.dismissPrompt();
+  toast.info("STRM 模块已按设计文档 §13.1 裁剪");
 }
 
 function startCreateFolder() {
@@ -530,11 +454,9 @@ async function loadPublicSystemConfig() {
     const mode = cfg.index_account_switch_mode === "floating" ? "floating" : "dropdown";
     accountSwitchMode.value = mode;
     saveAccountSwitchMode(mode);
-    strmAutoDetectEnabled.value = cfg.index_strm_auto_detect_enabled ?? true;
   } catch {
     const mode = readSavedAccountSwitchMode();
     accountSwitchMode.value = mode;
-    strmAutoDetectEnabled.value = true;
   }
 }
 
@@ -916,29 +838,7 @@ onUnmounted(() => {
         @open-upload-tasks="openTaskPanel"
         @toggle-favorites="store.toggleFavoritesOpen"
       />
-      <div v-if="strmPrompt.showPrompt.value && !strmGenerating" class="strm-prompt-bar">
-        <div class="strm-prompt-bar__main">
-          <span class="strm-prompt-bar__dot" aria-hidden="true" />
-          <span class="strm-prompt-bar__text">{{ strmPrompt.promptText.value }}</span>
-        </div>
-        <span class="strm-prompt-bar__actions">
-          <button
-            type="button"
-            class="strm-prompt-bar__action"
-            :disabled="strmGenerating"
-            @click="handleConfirmStrmPrompt"
-          >
-            生成
-          </button>
-          <button
-            type="button"
-            class="strm-prompt-bar__action strm-prompt-bar__action--muted"
-            @click="handleDismissStrmPrompt"
-          >
-            忽略
-          </button>
-        </span>
-      </div>
+      <div v-if="false" class="strm-prompt-bar" aria-hidden="true" />
       <div
         class="browser__content"
         :class="{

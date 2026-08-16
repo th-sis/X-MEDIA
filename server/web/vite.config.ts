@@ -22,7 +22,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       "/api": {
-        target: process.env.LITEPAN_API_PROXY || "http://127.0.0.1:5211",
+        target: process.env.LITEPAN_API_PROXY || "http://127.0.0.1:38088",
         changeOrigin: true,
       },
     },
