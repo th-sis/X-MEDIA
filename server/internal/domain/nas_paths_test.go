@@ -38,6 +38,11 @@ func TestParseNASPaths(t *testing.T) {
 			want:    NASPathList{"/mnt/absolute"},
 		},
 		{
+			name:    "Windows 绝对路径接受（跨平台开发友好）",
+			newJSON: `["C:\\Users\\test","D:/data"]`,
+			want:    NASPathList{`C:\Users\test`, "D:/data"},
+		},
+		{
 			name:    "新格式 JSON 损坏 → 回退旧字段",
 			newJSON: `not-a-json`,
 			legacy:  "/mnt/nas-root/Fallback",

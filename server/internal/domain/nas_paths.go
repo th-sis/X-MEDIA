@@ -21,7 +21,7 @@ type NASPathList []string
 //   - 自动 trim 前后空白
 //   - 过滤空字符串
 //   - 去重
-//   - 拒绝相对路径（非 "/" 开头）
+//   - 拒绝明显非绝对路径（不以 "/" 开头且不匹配 Windows 盘符 "X:\")
 //
 // 返回的列表可直接用于 filepath.WalkDir；调用方负责确认目录存在性。
 func ParseNASPaths(localPathsJSON string, legacyLocalPath string) NASPathList {
@@ -36,8 +36,8 @@ func ParseNASPaths(localPathsJSON string, legacyLocalPath string) NASPathList {
 				if p == "" {
 					continue
 				}
-				if !strings.HasPrefix(p, "/") {
-					continue // 拒绝相对路径
+				if !isAbsolutePath(p) {
+					continue // 拒绝相对路径（含非绝对 Windows 路径）
 				}
 				if !contains(out, p) {
 					out = append(out, p)
@@ -50,13 +50,30 @@ func ParseNASPaths(localPathsJSON string, legacyLocalPath string) NASPathList {
 	// 步骤 2：旧单字符串（向后兼容迁移期）
 	if len(out) == 0 {
 		if legacy := strings.TrimSpace(legacyLocalPath); legacy != "" {
-			if strings.HasPrefix(legacy, "/") {
+			if isAbsolutePath(legacy) {
 				out = append(out, legacy)
 			}
 		}
 	}
 
 	return out
+}
+
+// isAbsolutePath 判断是否绝对路径：
+//   - Unix 风格：以 "/" 开头
+//   - Windows 风格：以 "<盘符>:/" 或 "<盘符>:\" 开头（单测本地友好）
+func isAbsolutePath(p string) bool {
+	if strings.HasPrefix(p, "/") {
+		return true
+	}
+	// Windows: "C:\..." or "C:/..." or "C:"（少见但兼容）
+	if len(p) >= 3 && p[1] == ':' && (p[2] == '/' || p[2] == '\\') {
+		c := p[0]
+		if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+			return true
+		}
+	}
+	return false
 }
 
 func contains(list []string, s string) bool {

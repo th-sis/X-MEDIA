@@ -2,6 +2,7 @@ package indexengine
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -131,7 +132,7 @@ func TestScanNASFullPipeline(t *testing.T) {
 		WorkerCount:  4,
 	})
 
-	s.scanNAS(context.Background(), root, false)
+	s.scanNAS(context.Background(), []string{root}, false)
 
 	items, _ := index.ListBySource(context.Background(), "nas", 0)
 	if len(items) != 3 {
@@ -172,7 +173,7 @@ func TestScanNASIncrementalOnlyNewer(t *testing.T) {
 	cfg := &memoryConfigRepo{values: map[string]string{"nas_local_path": root}}
 
 	s := NewService(Options{MediaIndex: index, MediaLibrary: &memoryLibraryRepo{}, Configs: cfg, WorkerCount: 2})
-	s.scanNAS(context.Background(), root, false) // 全量后 lastScan 已设置
+	s.scanNAS(context.Background(), []string{root}, false) // 全量后 lastScan 已设置
 
 	// 新增一个文件
 	newFile := filepath.Join(root, "movies", "新片.2026.1080p.mp4")
@@ -183,7 +184,7 @@ func TestScanNASIncrementalOnlyNewer(t *testing.T) {
 	_ = before
 	time.Sleep(50 * time.Millisecond)
 
-	s.scanNAS(context.Background(), root, true)
+	s.scanNAS(context.Background(), []string{root}, true)
 
 	items, _ := index.ListBySource(context.Background(), "nas", 0)
 	if len(items) != 4 {
@@ -207,7 +208,7 @@ func TestScanNASPhaseDCleansMissing(t *testing.T) {
 	cfg := &memoryConfigRepo{values: map[string]string{"nas_local_path": root}}
 
 	s := NewService(Options{MediaIndex: index, MediaLibrary: &memoryLibraryRepo{}, Configs: cfg, WorkerCount: 2})
-	s.scanNAS(context.Background(), root, false)
+	s.scanNAS(context.Background(), []string{root}, false)
 	if n, _ := index.Count(context.Background()); n != 3 {
 		t.Fatalf("全量后应 3 条，实际 %d", n)
 	}
@@ -217,7 +218,7 @@ func TestScanNASPhaseDCleansMissing(t *testing.T) {
 		t.Fatalf("删除失败: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
-	s.scanNAS(context.Background(), root, true)
+	s.scanNAS(context.Background(), []string{root}, true)
 
 	if n, _ := index.Count(context.Background()); n != 2 {
 		t.Fatalf("Phase D 清理后应 2 条，实际 %d", n)
@@ -229,6 +230,104 @@ func TestScanNASNoPathConfig(t *testing.T) {
 	s := NewService(Options{MediaIndex: newMemoryIndexRepo(), MediaLibrary: &memoryLibraryRepo{}, Configs: &memoryConfigRepo{values: map[string]string{}}})
 	if err := s.ScanNASFull(context.Background()); err == nil {
 		t.Fatalf("未配置 NAS 路径应报错")
+	}
+}
+
+// TestScanNASMultiplePaths [V7 §9.7] 多媒体源遍历：两条 NAS 媒体源路径合并入库。
+// 使用 t.TempDir() + filepath.ToSlash 转为 POSIX 风格（容器生产环境只走 /mnt/...）。
+func TestScanNASMultiplePaths(t *testing.T) {
+	// 两个独立的临时 NAS 媒体源（统一 POSIX 路径）
+	rootA := filepath.ToSlash(t.TempDir()) + "/nasA"
+	rootB := filepath.ToSlash(t.TempDir()) + "/nasB"
+	// rootA: 2 个视频（1 个匹配 + 1 个孤儿）
+	if err := os.MkdirAll(filepath.FromSlash(rootA+"/movies"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.FromSlash(rootA+"/movies/阿凡达.2009.1080p.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.FromSlash(rootA+"/movies/未知片A.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// rootB: 1 个视频（匹配同一条 library 记录）
+	if err := os.MkdirAll(filepath.FromSlash(rootB+"/tv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.FromSlash(rootB+"/tv/阿凡达.S01E01.1080p.mkv"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	index := newMemoryIndexRepo()
+	library := &memoryLibraryRepo{items: []*domain.MediaLibrary{
+		{Title: "阿凡达", TitleOrig: "Avatar", Year: 2009, ExternalID: 19995, ExternalSource: "tmdb"},
+	}}
+	// 用新格式 nas_local_paths 数组（用 json.Marshal 自动正确转义反斜杠）
+	pathsJSON, err := json.Marshal([]string{rootA, rootB})
+	if err != nil {
+		t.Fatalf("marshal paths: %v", err)
+	}
+	cfg := &memoryConfigRepo{values: map[string]string{
+		"nas_local_paths": string(pathsJSON),
+	}}
+
+	s := NewService(Options{
+		MediaIndex:   index,
+		MediaLibrary: library,
+		Configs:      cfg,
+		WorkerCount:  2,
+	})
+
+	paths := s.NASPaths(context.Background())
+	if len(paths) != 2 {
+		t.Fatalf("NASPaths 应返回 2 条，实际 %d: %v", len(paths), paths)
+	}
+	s.scanNAS(context.Background(), paths, false)
+
+	items, _ := index.ListBySource(context.Background(), "nas", 0)
+	if len(items) != 3 {
+		t.Fatalf("两条媒体源应共索引 3 个视频文件，实际 %d: %#v", len(items), items)
+	}
+
+	// 验证进度快照
+	p := s.Progress()
+	if p.Total != 3 || p.Processed != 3 || p.Phase != "C" {
+		t.Fatalf("进度快照错误: total=%d processed=%d phase=%s", p.Total, p.Processed, p.Phase)
+	}
+	// 验证至少 1 个匹配（阿凡达 rootA 或 rootB）
+	var matched int
+	for _, item := range items {
+		if item.MatchStatus == domain.MatchMatched && item.ExternalID == 19995 {
+			matched++
+		}
+	}
+	if matched == 0 {
+		t.Fatalf("至少应有 1 个 ExternalID=19995 的匹配条目")
+	}
+}
+
+// TestNASPathsParsesNewFormat [V7 §9.7] NASPaths() 正确解析 JSON 数组格式。
+func TestNASPathsParsesNewFormat(t *testing.T) {
+	root := t.TempDir()
+	cfg := &memoryConfigRepo{values: map[string]string{
+		"nas_local_paths": `["/mnt/nas-root/Asia-Movie","/mnt/nas-root/Western-Movie"]`,
+	}}
+	s := NewService(Options{Configs: cfg})
+	paths := s.NASPaths(context.Background())
+	if len(paths) != 2 {
+		t.Fatalf("应返回 2 条路径，实际 %d: %v", len(paths), paths)
+	}
+	_ = root
+}
+
+// TestNASPathsFallbackLegacy [V7 §9.7] NASPaths() 在新格式为空时回退到旧 nas_local_path。
+func TestNASPathsFallbackLegacy(t *testing.T) {
+	cfg := &memoryConfigRepo{values: map[string]string{
+		"nas_local_path": "/mnt/nas-root/Legacy",
+	}}
+	s := NewService(Options{Configs: cfg})
+	paths := s.NASPaths(context.Background())
+	if len(paths) != 1 || paths[0] != "/mnt/nas-root/Legacy" {
+		t.Fatalf("应回退到旧字段单条，实际 %v", paths)
 	}
 }
 

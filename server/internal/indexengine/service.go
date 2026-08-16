@@ -26,7 +26,10 @@ type Service struct {
 
 // NASProgress 当前/最近一次 NAS 扫描进度（WS index_status 推送源，§9.7.1）。
 type NASProgress struct {
-	Scope       string `json:"scope"`
+	Scope string `json:"scope"`
+	// [V7 §9.7] Root 单条 NAS 媒体源路径 basename（多路径扫描时区分来源）；
+	// 汇总进度时为空字符串。
+	Root        string `json:"root,omitempty"`
 	Phase       string `json:"phase"` // A / B / C / ""
 	Status      string `json:"status"`
 	Processed   int    `json:"processed"`
@@ -61,16 +64,26 @@ func NewService(opts Options) *Service {
 	}
 }
 
-// NASPath 读取 NAS 本地路径配置（§9.4，configs nas_local_path）。
+// NASPath 读取单条 NAS 本地路径（兼容旧 nas_local_path 单字符串，V7 §9.7 之前）。
+// 推荐使用 NASPaths() 多路径版本。
 func (s *Service) NASPath(ctx context.Context) string {
+	paths := s.NASPaths(ctx)
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+// NASPaths 读取所有 NAS 媒体源路径（V7 §9.7）。
+// 优先解析 nas_local_paths（JSON 数组）；为空回退到 nas_local_path 单字符串。
+// 详见 domain.ParseNASPaths()。
+func (s *Service) NASPaths(ctx context.Context) []string {
 	if s.configs == nil {
-		return ""
+		return nil
 	}
-	v, ok, err := s.configs.Get(ctx, domain.ConfigNASLocalPath)
-	if err != nil || !ok {
-		return ""
-	}
-	return v
+	newJSON, _, _ := s.configs.Get(ctx, domain.ConfigNASLocalPaths)
+	legacy, _, _ := s.configs.Get(ctx, domain.ConfigNASLocalPath)
+	return domain.ParseNASPaths(newJSON, legacy)
 }
 
 // IsScanning 当前是否有 NAS 扫描在跑（P0 智能跳过用，§6.3）。
@@ -95,22 +108,24 @@ func (s *Service) LastScanAt() time.Time {
 }
 
 // ScanNASFull 触发 NAS 全盘扫描（异步，不阻塞调用方）。已在扫描中则忽略。
+// [V7 §9.7] 多路径遍历：每条 NAS 媒体源路径独立 Phase A/B，结果合并。
 func (s *Service) ScanNASFull(ctx context.Context) error {
-	path := s.NASPath(ctx)
-	if path == "" {
+	paths := s.NASPaths(ctx)
+	if len(paths) == 0 {
 		return domain.Errorf(domain.CodeValidation, "未配置 NAS 路径")
 	}
-	go s.scanNAS(context.Background(), path, false)
+	go s.scanNAS(context.Background(), paths, false)
 	return nil
 }
 
 // ScanNASIncremental 触发 NAS 增量扫描（§9.7.4：仅扫描 mtime 新于上次扫描的文件 + 清理消失文件）。
+// [V7 §9.7] 多路径遍历：每条路径独立处理。
 func (s *Service) ScanNASIncremental(ctx context.Context) error {
-	path := s.NASPath(ctx)
-	if path == "" {
+	paths := s.NASPaths(ctx)
+	if len(paths) == 0 {
 		return domain.Errorf(domain.CodeValidation, "未配置 NAS 路径")
 	}
-	go s.scanNAS(context.Background(), path, true)
+	go s.scanNAS(context.Background(), paths, true)
 	return nil
 }
 
