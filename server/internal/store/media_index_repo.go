@@ -58,7 +58,7 @@ func (r *mediaIndexRepo) Upsert(ctx context.Context, m *domain.MediaIndex) (int6
 			stream_url=excluded.stream_url, url_expires=excluded.url_expires, updated_at=CURRENT_TIMESTAMP`,
 		m.ExternalID, m.ExternalSource, m.Season, m.Episode, m.MediaType, m.Title, m.OriginalName, m.Year,
 		m.SourceType, m.AccountID, m.FilePath, m.FileID, m.FileSize, m.FileFormat, string(m.MatchStatus), m.MatchScore,
-		m.StreamURL, tsValue(timeOrZero(m.URLExpires)),
+		m.StreamURL, tsValue(timeOrZero(m.URLExpires)), tsValue(timeOrZero(m.LastPlayedAt)),
 	)
 	if err != nil {
 		return 0, wrapDB(err)

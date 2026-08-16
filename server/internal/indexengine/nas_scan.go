@@ -221,7 +221,10 @@ func (s *Service) processFile(ctx context.Context, root, path string) (bool, boo
 	if info, err := os.Stat(path); err == nil {
 		m.FileSize = info.Size()
 	}
-	_, _ = s.mediaIndex.Upsert(ctx, m)
+	if _, err := s.mediaIndex.Upsert(ctx, m); err != nil {
+		// [B 实测修复] Upsert 失败不再静默：计入孤儿并透出错误信息
+		return false, false, true
+	}
 	switch m.MatchStatus {
 	case domain.MatchMatched:
 		return true, false, false
