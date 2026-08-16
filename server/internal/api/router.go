@@ -173,6 +173,8 @@ func NewRouter(d Deps) http.Handler {
 		r.Get("/tmdb/search", h.tmdbSearch)
 		r.Get("/tmdb/detail/{id}", h.tmdbDetail)
 		r.Get("/tmdb/seasons/{id}", h.tmdbSeasons)
+		r.Get("/bangumi/search", h.bangumiSearch)
+		r.Get("/bangumi/detail/{id}", h.bangumiDetail)
 		r.Post("/resolve", h.resolveCreate)
 		r.Get("/resolve/result/{id}", h.resolveResult)
 		r.Get("/stream", h.streamHandler)

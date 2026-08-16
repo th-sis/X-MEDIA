@@ -136,8 +136,13 @@ func filterGenre(items []MediaSummary, genre string) []MediaSummary {
 	return out
 }
 
-// Discover 分类页分页。
+// Discover 分类页分页。[P0-4] 有 Key 时走真实 /discover。
 func (s *Service) Discover(ctx context.Context, mediaType, genre string, page int) (*ListResponse, error) {
+	if !s.demoMode(ctx) {
+		if resp, err := s.discoverLive(ctx, mediaType, genre, page); err == nil {
+			return resp, nil
+		}
+	}
 	var items []MediaSummary
 	switch mediaType {
 	case "movie":
@@ -170,11 +175,16 @@ func (s *Service) Discover(ctx context.Context, mediaType, genre string, page in
 	return &ListResponse{Items: items[start:end], Page: page, HasMore: end < total, Total: total}, nil
 }
 
-// Search 搜索（演示目录匹配标题/原名）。
+// Search 搜索。[P0-4] 有 Key 时走真实 /search/multi。
 func (s *Service) Search(ctx context.Context, q string, page int) (*ListResponse, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
 		return &ListResponse{Items: []MediaSummary{}, Page: page, HasMore: false, Total: 0}, nil
+	}
+	if !s.demoMode(ctx) {
+		if resp, err := s.searchLive(ctx, q, page); err == nil {
+			return resp, nil
+		}
 	}
 	lower := strings.ToLower(q)
 	var items []MediaSummary
@@ -187,8 +197,16 @@ func (s *Service) Search(ctx context.Context, q string, page int) (*ListResponse
 	return &ListResponse{Items: items, Page: page, HasMore: false, Total: len(items)}, nil
 }
 
-// Detail 详情。
+// Detail 详情。[P0-4] 有 Key 时走真实详情（+ media_library 缓存）。
 func (s *Service) Detail(ctx context.Context, externalID int64, source string) (*MediaDetail, error) {
+	if !s.demoMode(ctx) && source == "tmdb" {
+		if det, err := s.detailLive(ctx, externalID, "movie"); err == nil {
+			return det, nil
+		}
+		if det, err := s.detailLive(ctx, externalID, "tv"); err == nil {
+			return det, nil
+		}
+	}
 	for _, d := range demoCatalog {
 		if d.ExternalID == externalID && d.Source == source {
 			det := &MediaDetail{
@@ -209,8 +227,13 @@ func (s *Service) Detail(ctx context.Context, externalID int64, source string) (
 	return nil, domain.Errf(domain.CodeNotFound)
 }
 
-// Seasons 季集列表。
+// Seasons 季集列表。[P0-4] 有 Key 时走真实 /tv/{id}。
 func (s *Service) Seasons(ctx context.Context, externalID int64, source string) ([]SeasonInfo, error) {
+	if !s.demoMode(ctx) && source == "tmdb" {
+		if seasons, err := s.seasonsLive(ctx, externalID); err == nil {
+			return seasons, nil
+		}
+	}
 	for _, d := range demoCatalog {
 		if d.ExternalID == externalID && d.Source == source && d.Seasons > 0 {
 			return buildSeasons(d.Seasons, d.EpisodeCnt), nil
@@ -327,16 +350,16 @@ func (s *Service) fetchList(ctx context.Context, path, key string) ([]MediaSumma
 			}
 		}
 		items = append(items, MediaSummary{
-			ExternalID:  r.ID,
+			ExternalID:     r.ID,
 			ExternalSource: "tmdb",
-			MediaType:   mt,
-			Title:       title,
-			TitleOrig:   orig,
-			Year:        year,
-			VoteAvg:     r.VoteAvg,
-			PosterURL:   posterURL(r.PosterPath),
-			BackdropURL: backdropURL(r.Backdrop),
-			Overview:    r.Overview,
+			MediaType:      mt,
+			Title:          title,
+			TitleOrig:      orig,
+			Year:           year,
+			VoteAvg:        r.VoteAvg,
+			PosterURL:      posterURL(r.PosterPath),
+			BackdropURL:    backdropURL(r.Backdrop),
+			Overview:       r.Overview,
 		})
 	}
 	return items, nil

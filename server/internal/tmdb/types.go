@@ -2,27 +2,27 @@ package tmdb
 
 // MediaSummary 卡片级元数据（列表/榜单/搜索）。
 type MediaSummary struct {
-	ExternalID     int64   `json:"external_id"`
-	ExternalSource string  `json:"external_source"`
-	MediaType      string  `json:"media_type"`
-	Title          string  `json:"title"`
-	TitleOrig      string  `json:"title_orig"`
-	Year           int     `json:"year"`
-	VoteAvg        float64 `json:"vote_avg"`
-	PosterURL      string  `json:"poster_url"`
-	BackdropURL    string  `json:"backdrop_url"`
-	Overview       string  `json:"overview"`
+	ExternalID     int64    `json:"external_id"`
+	ExternalSource string   `json:"external_source"`
+	MediaType      string   `json:"media_type"`
+	Title          string   `json:"title"`
+	TitleOrig      string   `json:"title_orig"`
+	Year           int      `json:"year"`
+	VoteAvg        float64  `json:"vote_avg"`
+	PosterURL      string   `json:"poster_url"`
+	BackdropURL    string   `json:"backdrop_url"`
+	Overview       string   `json:"overview"`
 	Genres         []string `json:"genres"`
 }
 
 // MediaDetail 详情页元数据。
 type MediaDetail struct {
 	MediaSummary
-	Runtime  int             `json:"runtime"`
-	Seasons  int             `json:"seasons"`
-	Episodes int             `json:"episodes"`
+	Runtime     int          `json:"runtime"`
+	Seasons     int          `json:"seasons"`
+	Episodes    int          `json:"episodes"`
 	SeasonsList []SeasonInfo `json:"seasons_list"`
-	Cast     []CastMember   `json:"cast"`
+	Cast        []CastMember `json:"cast"`
 }
 
 // SeasonInfo 季信息。
@@ -30,6 +30,9 @@ type SeasonInfo struct {
 	SeasonNumber int           `json:"season_number"`
 	Name         string        `json:"name"`
 	EpisodeCount int           `json:"episode_count"`
+	AirDate      string        `json:"air_date,omitempty"`
+	Overview     string        `json:"overview,omitempty"`
+	PosterURL    string        `json:"poster_url,omitempty"`
 	Episodes     []EpisodeInfo `json:"episodes"`
 }
 
