@@ -4,18 +4,18 @@ import "strconv"
 
 // demoItem 演示目录条目（无 TMDB Key 时兜底，保证开箱即测）。
 type demoItem struct {
-	ExternalID  int64
-	Source      string
-	MediaType   string
-	Title       string
-	TitleOrig   string
-	Year        int
-	VoteAvg     float64
-	Overview    string
-	Genres      []string
-	Runtime     int
-	Seasons     int
-	EpisodeCnt  int
+	ExternalID int64
+	Source     string
+	MediaType  string
+	Title      string
+	TitleOrig  string
+	Year       int
+	VoteAvg    float64
+	Overview   string
+	Genres     []string
+	Runtime    int
+	Seasons    int
+	EpisodeCnt int
 }
 
 // demoPosterURL 生成 picsum 占位海报（[v7 整改] 演示数据不再空 URL）。

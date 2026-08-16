@@ -31,8 +31,20 @@ const (
 	ConfigResolveP0MinScore = "resolve_p0_min_score"
 	// [A3] §20 订阅自动搜寻间隔（天）
 	ConfigSubscriptionSearchDays = "subscription_search_days"
-	// [v7 整改] 启动配置验证结果持久化（无需修改）
-	// - 用 Get(validation_last_run) 查询最近一次运行时间
+	// [v7 §6.9.1] 转存根目录：pan_{driver}_save_root_{account_id}
+	// [v7 §6.9.2] 全局转存后重命名开关
+	// [v7 §6.9.3] 配额预警阈值 pan_{driver}_quota_warning_gb
+	// [v7 §6.9.3] 清理模式 pan_{driver}_cleanup_mode
+	// [v7 §6.9.3] 保留天数 pan_{driver}_cleanup_keep_recent_days
+
+	// ConfigKeyPrefixPanSaveRoot  §6.9.1 转存根目录前缀（按账号）：pan_{driver}_save_root_{account_id}
+	ConfigKeyPrefixPanSaveRoot = "pan_save_root_"
+	// ConfigKeyPrefixPanQuotaWarn §6.9.3 配额预警阈值（按 driver）：pan_{driver}_quota_warning_gb
+	ConfigKeyPrefixPanQuotaWarn = "pan_quota_warning_"
+	// ConfigKeyPrefixPanCleanupMode §6.9.3 清理模式（按 driver）：pan_{driver}_cleanup_mode
+	ConfigKeyPrefixPanCleanupMode = "pan_cleanup_mode_"
+	// ConfigKeyPrefixPanCleanupKeep §6.9.3 保留天数（按 driver）：pan_{driver}_cleanup_keep_recent_days
+	ConfigKeyPrefixPanCleanupKeep = "pan_cleanup_keep_recent_days_"
 )
 
 // ConfigDefaults 启动时缺失配置的默认值。

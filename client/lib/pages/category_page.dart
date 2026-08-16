@@ -4,6 +4,7 @@ import '../models/media.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/poster_wall.dart';
+import '../widgets/skeleton.dart';
 import 'detail_page.dart';
 
 class CategoryPage extends StatefulWidget {
@@ -45,32 +46,41 @@ class _CategoryPageState extends State<CategoryPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 24, AppSpacing.xl, 8),
-            child: Text(widget.title, style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error.isNotEmpty
-                    ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                        const Text('加载失败', style: TextStyle(color: AppColors.textSecondary)),
-                        const SizedBox(height: 8),
-                        TextButton(onPressed: _load, child: const Text('重试')),
-                      ]))
-                    : PosterGrid(
-                        items: _items,
-                        autofocusFirst: true,
-                        onTap: (m) => Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => DetailPage(externalId: m.externalId, source: m.externalSource)),
-                        ),
+      body: _loading
+          ? const GridSkeleton()
+          : _error.isNotEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 48),
+                      const SizedBox(height: 12),
+                      Text('加载失败', style: AppTypography.subtitle),
+                      const SizedBox(height: 8),
+                      TextButton(onPressed: _load, child: const Text('重试')),
+                    ],
+                  ),
+                )
+              : _items.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.movie_filter_rounded, color: AppColors.textMuted, size: 56),
+                          const SizedBox(height: 12),
+                          Text('暂无内容', style: AppTypography.subtitle),
+                          const SizedBox(height: 6),
+                          Text('请稍后再试或切换其他分类', style: AppTypography.small),
+                        ],
                       ),
-          ),
-        ],
-      ),
+                    )
+                  : PosterGrid(
+                      items: _items,
+                      autofocusFirst: true,
+                      onTap: (m) => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => DetailPage(externalId: m.externalId, source: m.externalSource)),
+                      ),
+                    ),
     );
   }
 }

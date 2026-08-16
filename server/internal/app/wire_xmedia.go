@@ -8,6 +8,7 @@ import (
 	"xmedia/internal/account"
 	"xmedia/internal/domain"
 	"xmedia/internal/driver"
+	"xmedia/internal/eventbus"
 	"xmedia/internal/indexengine"
 	"xmedia/internal/logx"
 	"xmedia/internal/media"
@@ -107,6 +108,15 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		Probe:         resolveSvc.ProbeAvailability,
 		Hub:           hub,
 		Log:           logs.For("subscription-searcher"),
+	})
+
+	// V7 §11.1.1：配置变更（resolve_priority / nas_enabled / magnet_* 等）发布
+	// eventbus.ConfigChanged，Hub 监听后通过 WS 推 capabilities_changed 消息。
+	eventbus.Subscribe(core.bus, func(_ context.Context, evt eventbus.ConfigChanged) {
+		hub.Broadcast("config_changed", map[string]any{
+			"key":           evt.Key,
+			"capabilities":  resolveSvc.Capabilities(context.Background()),
+		})
 	})
 
 	return &xmediaBundle{

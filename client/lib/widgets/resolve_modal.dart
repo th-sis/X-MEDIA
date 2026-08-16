@@ -175,7 +175,7 @@ class _ResolveModalState extends State<ResolveModal> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                style: AppTypography.subtitle),
             const SizedBox(height: 20),
             // 四层步骤条
             Row(
@@ -202,7 +202,7 @@ class _ResolveModalState extends State<ResolveModal> {
                         Expanded(child: Container(height: 3, color: i == 3 ? Colors.transparent : (done ? AppColors.success : AppColors.surfaceHigh))),
                       ]),
                       const SizedBox(height: 6),
-                      Text(layers[i], style: TextStyle(fontSize: 11, color: active ? AppColors.accent : AppColors.textMuted)),
+                      Text(layers[i], style: AppTypography.caption.copyWith(color: active ? AppColors.accent : AppColors.textMuted)),
                     ],
                   ),
                 );
@@ -218,10 +218,10 @@ class _ResolveModalState extends State<ResolveModal> {
                 Expanded(
                   child: Text(
                     _state.isSuccess ? _state.stage.label : (_state.errorMsg?.isNotEmpty == true ? _state.errorMsg! : _state.stage.label),
-                    style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
+                    style: AppTypography.body,
                   ),
                 ),
-                Text('${_state.progressPct}%', style: const TextStyle(fontSize: 13, color: AppColors.textMuted)),
+                Text('${_state.progressPct}%', style: AppTypography.small),
               ],
             ),
             const SizedBox(height: 10),
@@ -236,16 +236,55 @@ class _ResolveModalState extends State<ResolveModal> {
             ),
             const SizedBox(height: 20),
             if (_state.stage == ResolveStage.notFound) ...[
-              Text('已自动创建订阅，系统将每周搜寻资源', style: TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+              const Text('已自动创建订阅，系统将每周搜寻资源', style: AppTypography.small),
               const SizedBox(height: 8),
             ],
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(_state.isTerminal ? '关闭' : '后台继续', style: const TextStyle(color: AppColors.textSecondary)),
+            Row(
+              children: [
+                if (!_state.isTerminal)
+                  TextButton.icon(
+                    onPressed: _cancel,
+                    icon: const Icon(Icons.close_rounded, size: 18),
+                    label: const Text('取消'),
+                  ),
+                if (_state.isTerminal) ...[
+                  if (_state.isSuccess)
+                    ElevatedButton.icon(
+                      onPressed: () => _playDirect(),
+                      icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                      label: const Text('立即播放'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        foregroundColor: Colors.black,
+                      ),
+                    ),
+                  TextButton.icon(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: Text(_state.isSuccess ? '关闭' : '重试'),
+                  ),
+                ] else
+                  TextButton.icon(
+                    onPressed: null,
+                    icon: const Icon(Icons.hourglass_empty_rounded, size: 18),
+                    label: const Text('后台继续'),
+                  ),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+
+  void _cancel() {
+    _cleanup();
+    Navigator.of(context).pop();
+  }
+
+  void _playDirect() {
+    _cleanup();
+    Navigator.of(context).pop();
+    widget.onReady(_state.streamUrl ?? '', _state.source ?? '');
   }
 }

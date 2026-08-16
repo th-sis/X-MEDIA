@@ -45,10 +45,10 @@
 ```bash
 cd server
 go run ./cmd/xmedia
-# 默认监听 :8080，数据目录 ./data
+# 默认监听 :38088，数据目录 ./data
 ```
 
-- 管理后台：<http://127.0.0.1:8080>（默认管理员密码 `admin`，见 `server/README.md`）
+- 管理后台：<http://127.0.0.1:38088>（**首次启动后必须立即修改默认管理员密码**；初始化向导 `OnboardingWizard` 会强制引导改密，见 `server/README.md`）
 - 健康检查：`GET /api/health`
 - 能力预检：`GET /api/capabilities`
 

@@ -245,24 +245,6 @@ func (s *Service) runEngine(ctx context.Context, t *domain.ResolveTask) {
 	s.notFound(t)
 }
 
-// shouldSkipP0 判定是否跳过 P0，返回原因（空表示不跳过）。
-func (s *Service) shouldSkipP0(ctx context.Context) string {
-	if !s.nasConfigured(ctx) {
-		return "未配置 NAS 路径"
-	}
-	if s.mediaIndex == nil {
-		return "索引服务不可用"
-	}
-	cnt, err := s.indexCountFn(ctx)
-	if err != nil {
-		return "" // 查询失败不强制跳过，让 P0 自己 fail
-	}
-	if cnt == 0 {
-		return "NAS 索引为空"
-	}
-	return ""
-}
-
 func (s *Service) complete(t *domain.ResolveTask, source, fileID, ticket, fileName string) {
 	s.completeWithTag(t, source, fileID, ticket, fileName, "")
 }
@@ -287,33 +269,6 @@ func (s *Service) completeWithTag(t *domain.ResolveTask, source, fileID, ticket,
 			FileName:  fileName,
 			FileID:    fileID,
 			Ticket:    ticket,
-		})
-	}
-}
-
-func (s *Service) notFound(t *domain.ResolveTask) {
-	t.Status = domain.ResolveFailed
-	t.Stage = domain.StageNotFound
-	t.StageDetail = "暂无可用资源"
-	t.ErrorMsg = "暂无可用资源"
-	_ = s.tasks.Update(context.Background(), t)
-	if s.subs != nil {
-		_, _ = s.subs.Add(context.Background(), &domain.Subscription{
-			ExternalID:     t.ExternalID,
-			ExternalSource: t.ExternalSource,
-			MediaType:      t.MediaType,
-			Title:          t.Title,
-			Year:           t.Year,
-			Status:         domain.SubWatching,
-			MaxSearches:    12,
-		})
-	}
-	if s.hub != nil {
-		s.hub.Broadcast(websocket.TypeResolveFailed, websocket.ResolveFailedPayload{
-			TaskID:     t.ID,
-			Reason:     "暂无可用资源",
-			Suggestion: "已自动创建订阅，系统将每周自动搜寻",
-			Stage:      string(domain.StageNotFound),
 		})
 	}
 }
@@ -367,8 +322,36 @@ func (s *Service) Capabilities(ctx context.Context) domain.Capabilities {
 		NASIndexCount:      cnt,
 		PansearchAvailable: s.pansearchHealth(ctx),
 		LoggedInDrivers:    s.loggedInDrivers(ctx),
+		NASPhase:           "",
+		NASProcessedFiles:  0,
+		NASTotalFiles:      0,
 		MagnetEnabled:      s.magnetEnabledFn(ctx),
+		P0MinScore:         s.p0MinScoreFn(ctx),
 		DemoFallback:       s.demoFallbackFn(ctx),
 		ServerVersion:      s.serverVersion,
+	}
+}
+
+// ticketClaimsFor 构造播放票据载荷。
+func ticketClaimsFor(t *domain.ResolveTask, fileID, source string, accountID int64) playback.TicketClaims {
+	return playback.TicketClaims{
+		TaskID:     t.ID,
+		AccountID:  accountID,
+		FileID:     fileID,
+		Source:     source,
+		ExternalID: t.ExternalID,
+	}
+}
+
+// pushStageBroadcast 直接广播阶段推进（不写库，用于 P2 高频轮询推送）。
+func (s *Service) pushStageBroadcast(t *domain.ResolveTask) {
+	if s.hub != nil {
+		s.hub.Broadcast(websocket.TypeResolveStage, websocket.ResolveStagePayload{
+			TaskID:      t.ID,
+			ExternalID:  t.ExternalID,
+			Stage:       string(t.Stage),
+			Detail:      t.StageDetail,
+			ProgressPct: t.ProgressPct,
+		})
 	}
 }

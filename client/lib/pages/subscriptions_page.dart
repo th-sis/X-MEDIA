@@ -56,14 +56,14 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.fromLTRB(AppSpacing.xl, 24, AppSpacing.xl, 8),
-            child: Text('订阅', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+            padding: EdgeInsets.fromLTRB(AppSpacing.xl, 16, AppSpacing.xl, 10),
+            child: Text('订阅', style: AppTypography.heading),
           ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _items.isEmpty
-                    ? const Center(child: Text('暂无订阅', style: TextStyle(color: AppColors.textMuted)))
+                    ? const Center(child: Text('暂无订阅', style: AppTypography.body))
                     : ListView.builder(
                         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: 8),
                         itemCount: _items.length,
@@ -82,10 +82,9 @@ class _SubscriptionsPageState extends State<SubscriptionsPage> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(s.title, style: const TextStyle(color: AppColors.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+                                      Text(s.title, style: AppTypography.subtitle),
                                       const SizedBox(height: 4),
-                                      Text('搜寻次数 ${s.searchCount}/${s.maxSearches}',
-                                          style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+                                      Text('搜寻次数 ${s.searchCount}/${s.maxSearches}', style: AppTypography.caption),
                                     ],
                                   ),
                                 ),

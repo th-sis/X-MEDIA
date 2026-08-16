@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -90,7 +91,7 @@ func pick(items []MediaSummary, n int) []MediaSummary {
 	return items[:n]
 }
 
-// Home 返回首页 12 个榜单（演示目录派生；有 Key 时走真实 TMDB）。
+// Home 返回首页 12 个榜单（§7.2）。有 Key 时走真实 TMDB，否则演示目录派生。
 func (s *Service) Home(ctx context.Context) ([]Section, error) {
 	if !s.demoMode(ctx) {
 		if secs, err := s.homeLive(ctx); err == nil {
@@ -100,20 +101,21 @@ func (s *Service) Home(ctx context.Context) ([]Section, error) {
 	all := allSummaries()
 	movies := byType("movie")
 	tvs := byType("tv")
+	documentaries := byType("documentary")
+	varieties := byType("variety")
 	sections := []Section{
 		{Key: "trending_movie_week", Title: "热门电影", Items: pick(movies, 12)},
 		{Key: "trending_tv_week", Title: "热门剧集", Items: pick(tvs, 12)},
 		{Key: "trending_all_day", Title: "今日热播", Items: pick(all, 12)},
 		{Key: "upcoming", Title: "即将上映", Items: pick(movies, 12)},
 		{Key: "top_rated", Title: "评分最高", Items: pick(sortByVote(all), 12)},
-		{Key: "action", Title: "动作电影", Items: pick(filterGenre(movies, "动作"), 8)},
-		{Key: "scifi", Title: "科幻电影", Items: pick(filterGenre(movies, "科幻"), 8)},
-		{Key: "comedy", Title: "喜剧电影", Items: pick(filterGenre(byType("tv"), "喜剧"), 8)},
+		{Key: "action", Title: "动作电影", Items: pick(filterGenre(movies, "动作"), 12)},
+		{Key: "scifi", Title: "科幻电影", Items: pick(filterGenre(movies, "科幻"), 12)},
+		{Key: "comedy", Title: "喜剧电影", Items: pick(filterGenre(movies, "喜剧"), 12)},
 		{Key: "tv_popular", Title: "热播剧集", Items: pick(tvs, 12)},
 		{Key: "tv_top_rated", Title: "高分剧集", Items: pick(sortByVote(tvs), 12)},
-		{Key: "anime", Title: "动漫", Items: pick(byType("tv"), 12)},
-		{Key: "documentary", Title: "纪录片", Items: pick(byType("documentary"), 8)},
-		{Key: "variety", Title: "综艺", Items: pick(byType("variety"), 8)},
+		{Key: "variety", Title: "综艺", Items: pick(varieties, 12)},
+		{Key: "documentary", Title: "纪录片", Items: pick(documentaries, 12)},
 	}
 	return sections, nil
 }
@@ -198,6 +200,43 @@ func (s *Service) Search(ctx context.Context, q string, page int) (*ListResponse
 	return &ListResponse{Items: items, Page: page, HasMore: false, Total: len(items)}, nil
 }
 
+// TestKey 用指定 API Key 发起一次真实搜索请求，验证 key 连通性（§1.4 Step 2）。
+// 成功返回命中的条目数；失败返回错误（含 HTTP 状态/无效 key 等具体原因）。
+func (s *Service) TestKey(ctx context.Context, key string) (int, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return 0, domain.Errorf(domain.CodeValidation, "TMDB API Key 不能为空")
+	}
+	// 用 key 直接发起真实请求（绕过 demoMode 检查，因为调用方可能尚未保存 key）
+	query := url.Values{}
+	query.Set("query", "avatar")
+	query.Set("page", "1")
+	query.Set("include_adult", "false")
+	rawURL := s.base + "/search/multi?api_key=" + url.QueryEscape(key) + "&language=zh-CN&" + query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return 0, domain.Errorf(domain.CodeDriverError, "无法连接 TMDB API: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return 0, domain.Errorf(domain.CodeAuthExpired, "TMDB API Key 无效（HTTP %d）", resp.StatusCode)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return 0, domain.Errorf(domain.CodeDriverError, "TMDB API 返回 HTTP %d", resp.StatusCode)
+	}
+	var body struct {
+		Results []tmdbResult `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, domain.Errorf(domain.CodeDriverError, "TMDB 响应解析失败: %v", err)
+	}
+	return len(body.Results), nil
+}
+
 // Detail 详情。[P0-4] 有 Key 时走真实详情（+ media_library 缓存）。
 func (s *Service) Detail(ctx context.Context, externalID int64, source string) (*MediaDetail, error) {
 	if !s.demoMode(ctx) && source == "tmdb" {
@@ -262,7 +301,7 @@ func buildSeasons(seasons, total int) []SeasonInfo {
 	return out
 }
 
-// homeLive 有 TMDB Key 时按真实榜单拉取；失败返回 error 由调用方回退演示数据。
+// homeLive 有 TMDB Key 时按真实榜单拉取（§7.2 共 12 个）；失败返回 error 由调用方回退演示数据。
 func (s *Service) homeLive(ctx context.Context) ([]Section, error) {
 	defs := []struct {
 		key, title, path string
@@ -272,8 +311,13 @@ func (s *Service) homeLive(ctx context.Context) ([]Section, error) {
 		{"trending_all_day", "今日热播", "/trending/all/day"},
 		{"upcoming", "即将上映", "/movie/upcoming"},
 		{"top_rated", "评分最高", "/movie/top_rated"},
+		{"action", "动作电影", "/discover/movie?with_genres=28&sort_by=popularity.desc"},
+		{"scifi", "科幻电影", "/discover/movie?with_genres=878&sort_by=popularity.desc"},
+		{"comedy", "喜剧电影", "/discover/movie?with_genres=35&sort_by=popularity.desc"},
 		{"tv_popular", "热播剧集", "/tv/popular"},
 		{"tv_top_rated", "高分剧集", "/tv/top_rated"},
+		{"variety", "综艺", "/discover/tv?with_genres=10764&sort_by=popularity.desc"},
+		{"documentary", "纪录片", "/discover/movie?with_genres=99&sort_by=popularity.desc"},
 	}
 	key := s.apiKey(ctx)
 	var secs []Section

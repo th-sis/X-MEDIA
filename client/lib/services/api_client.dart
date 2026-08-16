@@ -50,6 +50,12 @@ class ApiClient {
     return (j['items'] as List<dynamic>?)?.map((e) => MediaSummary.fromJson(e as Map<String, dynamic>)).toList() ?? const [];
   }
 
+  Future<List<MediaSummary>> panSearch(String q) async {
+    final r = await http.get(_u('/api/media/pansearch', {'q': q})).timeout(const Duration(seconds: 12));
+    final j = _decode(r);
+    return (j['items'] as List<dynamic>?)?.map((e) => MediaSummary.fromJson(e as Map<String, dynamic>)).toList() ?? const [];
+  }
+
   Future<MediaDetail> detail(int id, {String source = 'tmdb'}) async {
     final r = await http.get(_u('/api/tmdb/detail/$id', {'source': source})).timeout(const Duration(seconds: 12));
     return MediaDetail.fromJson(_decode(r));

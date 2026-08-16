@@ -7,12 +7,18 @@ import (
 
 // GET /api/state/snapshot — 全局状态快照（客户端 app_state 恢复兜底数据源）。
 // 聚合 capabilities/索引计数/活跃解析任务/版本与运行时长。
+// V7 §28.3 追加 server_started_at / last_restart_reason，客户端对比后可感知重启并强制刷新。
 func (h *Handler) stateSnapshot(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	reason := h.lastRestartReason
+	if reason == "" {
+		reason = "graceful"
+	}
 	out := map[string]any{
-		"server_version":     h.serverVersion,
-		"server_started_at":  h.serverStartedAt,
-		"server_uptime_secs": int(time.Since(h.serverStartedAt).Seconds()),
+		"server_version":      h.serverVersion,
+		"server_started_at":   h.serverStartedAt,
+		"server_uptime_secs":  int(time.Since(h.serverStartedAt).Seconds()),
+		"last_restart_reason": reason,
 	}
 	if h.resolveSvc != nil {
 		out["capabilities"] = h.resolveSvc.Capabilities(ctx)

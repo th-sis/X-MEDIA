@@ -35,8 +35,8 @@ class _SettingsPageState extends State<SettingsPage> {
       body: ListView(
         padding: const EdgeInsets.all(AppSpacing.xl),
         children: [
-          const Text('设置', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
-          const SizedBox(height: 24),
+          const Text('设置', style: AppTypography.heading),
+          const SizedBox(height: 16),
 
           // 后端连接
           _card('后端连接', [
@@ -45,7 +45,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 Expanded(
                   child: TextField(
                     controller: _urlController,
-                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+                    style: AppTypography.small,
                     decoration: InputDecoration(
                       labelText: '后端地址',
                       hintText: 'http://127.0.0.1:8080',
@@ -75,16 +75,14 @@ class _SettingsPageState extends State<SettingsPage> {
               ok: caps.loggedInDrivers.isNotEmpty,
               text: caps.loggedInDrivers.isEmpty ? '未登录任何网盘（演示模式）' : '已登录网盘：${caps.loggedInDrivers.join(', ')}',
             ),
-            Text('服务端版本：${caps.serverVersion.isEmpty ? '未知' : caps.serverVersion}',
-                style: const TextStyle(color: AppColors.textMuted, fontSize: 12)),
+            Text('服务端版本：${caps.serverVersion.isEmpty ? '未知' : caps.serverVersion}', style: AppTypography.caption),
           ]),
 
           // 健康检查
           if (app.health.isNotEmpty) _card('健康检查', _healthRows(app)),
 
           const SizedBox(height: 24),
-          const Text('操作说明：方向键 / 鼠标导航，回车或点击确认，Esc 或返回键退出。',
-              style: TextStyle(color: AppColors.textMuted, fontSize: 12)),
+          const Text('操作说明：方向键 / 鼠标导航，回车或点击确认，Esc 或返回键退出。', style: AppTypography.caption),
         ],
       ),
     );
@@ -98,7 +96,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _StatusRow(ok: status('tmdb') == 'ok', text: 'TMDB：${status('tmdb')}'),
       _StatusRow(ok: status('pansearch') == 'ok', text: '盘搜：${status('pansearch')}'),
       const SizedBox(height: 4),
-      Text('整体状态：${h['overall'] ?? '未知'}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 13)),
+      Text('整体状态：${h['overall'] ?? '未知'}', style: AppTypography.small),
     ];
   }
 
@@ -113,7 +111,7 @@ class _SettingsPageState extends State<SettingsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+          Text(title, style: AppTypography.subtitle),
           const SizedBox(height: 14),
           ...children,
         ],
@@ -136,7 +134,7 @@ class _StatusRow extends StatelessWidget {
           Icon(ok ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
               color: ok ? AppColors.success : AppColors.warning, size: 18),
           const SizedBox(width: 10),
-          Expanded(child: Text(text, style: const TextStyle(color: AppColors.textPrimary, fontSize: 14))),
+          Expanded(child: Text(text, style: AppTypography.body.copyWith(fontSize: 14))),
         ],
       ),
     );

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"net/http"
+	"os"
 	"time"
 
 	"xmedia/internal/adminauth"
@@ -14,6 +15,18 @@ import (
 	"xmedia/internal/notification"
 	"xmedia/internal/settings"
 )
+
+// restartReason V7 §28.3：根据启动环境判定本次进程的重启原因。
+// 优先级：env XMEDIA_RESTART_REASON > 默认 graceful。
+// - graceful：用户主动 docker-compose restart / Ctrl-C / kill SIGTERM
+// - config_change：env 显式注入（运维/部署脚本识别为配置变更）
+// - oom / panic：由崩溃监控外部注入
+func restartReason() string {
+	if v := os.Getenv("XMEDIA_RESTART_REASON"); v != "" {
+		return v
+	}
+	return "graceful"
+}
 
 func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core *coreBundle, svc *servicesBundle) (*http.Server, error) {
 	notifySvc := notification.NewService(notification.Options{
@@ -63,8 +76,10 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		IndexEngine:       xm.indexEngine,
 		MediaIndex:        st.store.MediaIndex,
 		Hub:               xm.hub,
-		ServerVersion:     xmediaVersion,
-		ServerStartedAt:   time.Now(),
+		Bus:               core.bus,
+		ServerVersion:      xmediaVersion,
+		ServerStartedAt:    time.Now(),
+		LastRestartReason: restartReason(),
 	})
 
 	return &http.Server{

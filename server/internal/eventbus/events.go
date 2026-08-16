@@ -42,10 +42,17 @@ type OfflineDownloadCompleted struct {
 
 // NotificationCreated 新通知产生。
 type NotificationCreated struct {
-	Level     string
-	Category  string
-	Title     string
-	Message   string
+	Level    string
+	Category string
+	Title    string
+	Message  string
 	AccountID int64
 	RefID     int64
+}
+
+// ConfigChanged V7 §11.1：策略配置变更（resolve_priority / nas_enabled /
+// resolve_magnet_enabled 等），用于触发 capabilities WS 推送。
+type ConfigChanged struct {
+	Key   string
+	Value string
 }

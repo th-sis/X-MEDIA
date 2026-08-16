@@ -616,6 +616,10 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+func (s *Service) SecretKey() []byte {
+	return s.secret
+}
+
 func randomPassword(length int) string {
 	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	buf := make([]byte, length)

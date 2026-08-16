@@ -48,7 +48,7 @@ func TestDefaultLocalLayout(t *testing.T) {
 	if want := filepath.Join("./data", "xmedia.db"); cfg.DBPath != want {
 		t.Fatalf("DBPath=%q, want %q", cfg.DBPath, want)
 	}
-	if cfg.ListenAddr != ":8080" {
-		t.Fatalf("ListenAddr=%q, want :8080", cfg.ListenAddr)
+	if cfg.ListenAddr != ":38088" {
+		t.Fatalf("ListenAddr=%q, want :38088", cfg.ListenAddr)
 	}
 }

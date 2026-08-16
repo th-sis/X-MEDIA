@@ -5,6 +5,7 @@ import '../models/media.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/poster_wall.dart';
+import '../widgets/skeleton.dart';
 import 'detail_page.dart';
 
 class SearchPage extends StatefulWidget {
@@ -86,14 +87,14 @@ class _SearchPageState extends State<SearchPage> {
         children: [
           // 搜索栏
           Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 24, AppSpacing.xl, 0),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 16, AppSpacing.xl, 16),
             child: Focus(
               focusNode: _focus,
               child: TextField(
                 controller: _controller,
                 autofocus: false,
                 onSubmitted: _submit,
-                style: const TextStyle(color: AppColors.textPrimary, fontSize: 16),
+                style: AppTypography.body,
                 decoration: InputDecoration(
                   hintText: '搜索电影 / 剧集 / 动漫...',
                   prefixIcon: const Icon(Icons.search_rounded, color: AppColors.textSecondary),
@@ -123,7 +124,7 @@ class _SearchPageState extends State<SearchPage> {
             child: !_searched
                 ? _buildHistory()
                 : _loading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const GridSkeleton()
                     : _results.isEmpty
                         ? _buildNoResult()
                         : PosterGrid(
@@ -142,7 +143,7 @@ class _SearchPageState extends State<SearchPage> {
   Widget _buildHistory() {
     if (_history.isEmpty) {
       return const Center(
-        child: Text('输入关键词开始搜索', style: TextStyle(color: AppColors.textMuted, fontSize: 15)),
+        child: Text('输入关键词开始搜索', style: AppTypography.body),
       );
     }
     return ListView(
@@ -150,20 +151,20 @@ class _SearchPageState extends State<SearchPage> {
       children: [
         Row(
           children: [
-            const Text('搜索历史', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            const Text('搜索历史', style: AppTypography.subtitle),
             const Spacer(),
             TextButton(
               onPressed: () async {
                 await context.read<AppState>().api.clearSearchHistory();
                 _loadHistory();
               },
-              child: const Text('清空', style: TextStyle(color: AppColors.textSecondary)),
+              child: const Text('清空', style: AppTypography.small),
             ),
           ],
         ),
         ..._history.map((h) => ListTile(
               leading: const Icon(Icons.history_rounded, color: AppColors.textMuted),
-              title: Text(h, style: const TextStyle(color: AppColors.textPrimary)),
+              title: Text(h, style: AppTypography.body),
               onTap: () {
                 _controller.text = h;
                 _search(h);
@@ -174,17 +175,49 @@ class _SearchPageState extends State<SearchPage> {
   }
 
   Widget _buildNoResult() {
+    final hasPan = context.read<AppState>().capabilities.pansearchAvailable;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const Icon(Icons.search_off_rounded, size: 56, color: AppColors.textMuted),
           const SizedBox(height: 12),
-          Text('未找到“${_controller.text}”相关内容', style: const TextStyle(fontSize: 16, color: AppColors.textPrimary)),
+          Text('未找到“${_controller.text}”相关内容', style: AppTypography.subtitle),
           const SizedBox(height: 10),
-          const Text('建议尝试英文名，或简化关键词', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
+          if (hasPan)
+            ElevatedButton.icon(
+              onPressed: () => _directPanSearch(_controller.text),
+              icon: const Icon(Icons.cloud_download_rounded, size: 18),
+              label: const Text('直接盘搜'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.black,
+              ),
+            )
+          else
+            const Text('建议尝试英文名，或简化关键词', style: AppTypography.small),
         ],
       ),
     );
+  }
+
+  Future<void> _directPanSearch(String q) async {
+    if (q.trim().isEmpty) return;
+    setState(() {
+      _loading = true;
+      _searched = true;
+    });
+    try {
+      final results = await context.read<AppState>().api.panSearch(q.trim());
+      if (mounted) {
+        setState(() => _results = results);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _results = const []);
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 }

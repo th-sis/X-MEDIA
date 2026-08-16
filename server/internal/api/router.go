@@ -24,6 +24,7 @@ import (
 	"xmedia/internal/cacheretention"
 	"xmedia/internal/crosstransfer"
 	"xmedia/internal/domain"
+	"xmedia/internal/eventbus"
 	"xmedia/internal/file"
 	"xmedia/internal/indexengine"
 	"xmedia/internal/logx"
@@ -75,8 +76,11 @@ type Deps struct {
 	IndexEngine     *indexengine.Service
 	MediaIndex      domain.MediaIndexRepository
 	Hub             *websocket.Hub
+	Bus             *eventbus.Bus
 	ServerVersion   string
 	ServerStartedAt time.Time
+	// LastRestartReason V7 §28.3：客户端感知重启（graceful/config_change/oom/panic）。
+	LastRestartReason string
 }
 
 // Handler 持有处理请求所需的依赖。
@@ -108,11 +112,12 @@ type Handler struct {
 	pansearch       *pansearch.Service
 	indexAdmin      *indexAdminHandlers
 	configAdmin     *configAdminHandlers
-	hub             *websocket.Hub
-	configs         domain.ConfigRepository
-	mediaIndex      domain.MediaIndexRepository
+	hub               *websocket.Hub
+	configs           domain.ConfigRepository
+	mediaIndex        domain.MediaIndexRepository
 	serverVersion   string
 	serverStartedAt time.Time
+	lastRestartReason string
 }
 
 // NewRouter 装配并返回 HTTP 路由（含内嵌管理页面）。
@@ -151,11 +156,12 @@ func NewRouter(d Deps) http.Handler {
 		mediaIndex:        d.MediaIndex,
 		serverVersion:     d.ServerVersion,
 		serverStartedAt:   d.ServerStartedAt,
+		lastRestartReason: d.LastRestartReason,
 	}
 	if d.IndexEngine != nil {
 		h.indexAdmin = &indexAdminHandlers{engine: d.IndexEngine, index: d.MediaIndex}
 	}
-	h.configAdmin = &configAdminHandlers{configs: d.Configs}
+	h.configAdmin = &configAdminHandlers{configs: d.Configs, bus: d.Bus}
 
 	r := chi.NewRouter()
 	r.Use(trackResponseCommit)
@@ -276,6 +282,9 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/", h.configAdmin.handleConfigsGet)
 					r.Put("/", h.configAdmin.handleConfigsPut)
 				})
+				// §1.4 Step 2：TMDB 配置专用端点（保存即测试 / 仅测试）
+				r.Put("/tmdb/config", h.tmdbAdminConfig)
+				r.Post("/tmdb/test", h.tmdbAdminTest)
 				r.Get("/notifications", h.listNotifications)
 				r.Get("/notifications/unread-count", h.notificationUnreadCount)
 				r.Post("/notifications/read-all", h.markAllNotificationsRead)
@@ -342,8 +351,8 @@ func NewRouter(d Deps) http.Handler {
 		})
 	})
 
-	// WebSocket 端点（独立于 /api 前缀）
-	r.Get("/ws", h.wsHandle)
+	// WebSocket 端点（独立于 /api 前缀；需认证）
+	r.Get("/ws", h.wsAuthMiddleware(h.wsHandle))
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {

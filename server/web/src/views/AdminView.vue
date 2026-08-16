@@ -13,6 +13,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from "vu
 import AdminShell from "@/components/admin/AdminShell.vue";
 import WarningBanner from "@/components/admin/WarningBanner.vue";
 import AdminEmptyState from "@/components/admin/AdminEmptyState.vue";
+import OnboardingWizard from "@/components/admin/OnboardingWizard.vue";
 
 const adminPageLoaders = {
   dashboard: () => import("@/components/admin/DashboardManagement.vue"),
@@ -20,13 +21,19 @@ const adminPageLoaders = {
   settings: () => import("@/components/admin/SystemSettings.vue"),
   tasks: () => import("@/components/admin/TaskManagement.vue"),
   "x-media": () => import("@/components/admin/XMediaPanel.vue"),
-  "cross-transfer": () => import("@/components/admin/CrossDriveTransfer.vue"),
-};
+  // V7 §11.1 网盘优先级（拖拽 + 已登录校验 + 磁力兜底）
+    priority: () => import("@/components/admin/PriorityConfig.vue"),
+    // V7 §6.9 转存路径与配额
+    transfer: () => import("@/components/admin/TransferSettings.vue"),
+    "cross-transfer": () => import("@/components/admin/CrossDriveTransfer.vue"),
+  };
 const DashboardManagement = defineAsyncComponent(adminPageLoaders.dashboard);
 const AccountManagement = defineAsyncComponent(adminPageLoaders.accounts);
 const SystemSettings = defineAsyncComponent(adminPageLoaders.settings);
 const TaskManagement = defineAsyncComponent(adminPageLoaders.tasks);
 const XMediaPanel = defineAsyncComponent(adminPageLoaders["x-media"]);
+const PriorityConfig = defineAsyncComponent(adminPageLoaders.priority);
+const TransferSettings = defineAsyncComponent(adminPageLoaders.transfer);
 const CrossDriveTransfer = defineAsyncComponent(adminPageLoaders["cross-transfer"]);
 import { logout, fetchSystemConfig } from "@/api/auth";
 import { useAuthStore } from "@/stores/auth";
@@ -42,7 +49,9 @@ const nav = [
   { key: "dashboard", label: "仪表盘", icon: "tachometer-alt" },
   { key: "accounts", label: "存储管理", icon: "hdd" },
   { key: "settings", label: "系统设置", icon: "cogs" },
-  { key: "tasks", label: "任务管理", icon: "tasks" },
+  { key: "priority", label: "播放优先级", icon: "layer-group" },
+  { key: "transfer", label: "转存设置", icon: "folder-tree" },
+    { key: "tasks", label: "任务管理", icon: "tasks" },
   { key: "x-media", label: "媒体配置", icon: "clapperboard" },
   { key: "cross-transfer", label: "跨盘秒传", icon: "right-left" },
 ];
@@ -59,6 +68,17 @@ const preloadedPages = new Set<string>();
 
 const mustChangePassword = computed(() => auth.mustChangePassword);
 const passwordChangeReason = computed(() => auth.passwordChangeReason);
+
+// V7 §1.4：默认口令（admin/admin）场景才弹初始化向导；临时密码场景保持原改密页引导。
+const showOnboarding = computed(
+  () => mustChangePassword.value && passwordChangeReason.value === "default_credentials",
+);
+
+function handleOnboardingDone() {
+  // 向导完成：改密已生效，放行所有页面
+  auth.mustChangePassword = false;
+  if (page.value === "settings") void router.replace({ path: "/admin", query: { page: "dashboard" } });
+}
 
 const passwordChangeMessage = computed(() => {
   if (passwordChangeReason.value === "default_credentials") {
@@ -83,6 +103,8 @@ const adminHomeReturnMode = ref<"sidebar" | "top_icon">("top_icon");
 const cachedPageComponents: Record<string, Component> = {
   dashboard: DashboardManagement,
   accounts: AccountManagement,
+  priority: PriorityConfig,
+  transfer: TransferSettings,
   tasks: TaskManagement,
   "x-media": XMediaPanel,
 };
@@ -156,6 +178,9 @@ async function handlePasswordUpdated() {
   await auth.load();
   if (!auth.mustChangePassword) {
     toast.success("密码已更新，后台功能已解锁");
+    // V7 §1.4 Day 1 Step 2：改完密码自动跳到媒体配置（TMDB/PanSou/NAS），
+    // 避免用户改完密码后只看到系统设置、不知道下一步该配置 TMDB。
+    void router.replace({ path: "/admin", query: { page: "x-media" } });
   }
 }
 
@@ -248,11 +273,14 @@ onBeforeUnmount(() => {
       <span>{{ passwordChangeMessage }}</span>
     </WarningBanner>
 
+    <!-- V7 §1.4 Step 2：默认口令首次登录时弹出初始化向导（3 步） -->
+    <OnboardingWizard v-if="showOnboarding" @done="handleOnboardingDone" />
+
     <AdminEmptyState
-      v-if="!cachedPageComponent && !['settings', 'cross-transfer'].includes(page)"
-      icon="🚧"
-      :title="`「${nav.find((n) => n.key === page)?.label}」功能开发中`"
-    />
+          v-if="!cachedPageComponent && !['settings', 'priority', 'transfer', 'cross-transfer'].includes(page)"
+          icon="🚧"
+          :title="`「${nav.find((n) => n.key === page)?.label}」功能开发中`"
+        />
     <KeepAlive>
       <SystemSettings
         v-if="page === 'settings'"
@@ -262,6 +290,8 @@ onBeforeUnmount(() => {
         @admin-ui-updated="loadAdminUiConfig"
       />
       <CrossDriveTransfer v-else-if="page === 'cross-transfer'" />
+      <PriorityConfig v-else-if="page === 'priority'" />
+      <TransferSettings v-else-if="page === 'transfer'" />
       <component :is="cachedPageComponent" v-else-if="cachedPageComponent" :key="page" />
     </KeepAlive>
   </AdminShell>

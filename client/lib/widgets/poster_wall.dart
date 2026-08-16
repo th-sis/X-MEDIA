@@ -26,10 +26,10 @@ class PosterShelf extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 12, AppSpacing.xl, 8),
+          padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 10, AppSpacing.xl, 8),
           child: Text(
             title,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+            style: AppTypography.title,
           ),
         ),
         SizedBox(

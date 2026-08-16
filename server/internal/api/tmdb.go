@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"xmedia/internal/domain"
 	"xmedia/internal/tmdb"
@@ -132,4 +133,58 @@ func queryIntDefault(r *http.Request, name string, def int) int {
 		return def
 	}
 	return n
+}
+
+// PUT /api/admin/tmdb/config — 保存 TMDB API Key 并立即测试连通（§1.4 Step 2）。
+// 请求体：{"api_key": "..."}。测试通过才落库；失败返回具体原因且不保存。
+func (h *Handler) tmdbAdminConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		APIKey string `json:"api_key"`
+	}
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	if h.tmdb == nil {
+		writeErr(w, domain.Errf(domain.CodeInternal))
+		return
+	}
+	// 先测试，通过才保存
+	count, err := h.tmdb.TestKey(r.Context(), req.APIKey)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if h.configs != nil {
+		if err := h.configs.Set(r.Context(), domain.ConfigTMDBAPIKey, req.APIKey); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	writeOK(w, map[string]any{"saved": true, "test_count": count})
+}
+
+// POST /api/admin/tmdb/test — 测试 TMDB API Key 连通性（§1.4 Step 2）。
+// 请求体：{"api_key": "..."}（可省略，省略时用已保存的 key）。
+func (h *Handler) tmdbAdminTest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		APIKey string `json:"api_key"`
+	}
+	_ = decodeJSON(r, &req)
+	key := strings.TrimSpace(req.APIKey)
+	if key == "" && h.configs != nil {
+		if v, ok, err := h.configs.Get(r.Context(), domain.ConfigTMDBAPIKey); err == nil && ok {
+			key = v
+		}
+	}
+	if h.tmdb == nil {
+		writeErr(w, domain.Errf(domain.CodeInternal))
+		return
+	}
+	count, err := h.tmdb.TestKey(r.Context(), key)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeOK(w, map[string]any{"ok": true, "test_count": count})
 }

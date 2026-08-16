@@ -10,6 +10,7 @@ class PosterCard extends StatelessWidget {
   final double width;
   final double height;
   final bool autofocus;
+  final ValueChanged<bool>? onFocusChange;
 
   const PosterCard({
     super.key,
@@ -18,6 +19,7 @@ class PosterCard extends StatelessWidget {
     this.width = 150,
     this.height = 225,
     this.autofocus = false,
+    this.onFocusChange,
   });
 
   @override
@@ -26,6 +28,7 @@ class PosterCard extends StatelessWidget {
       autofocus: autofocus,
       debugLabel: 'poster:${media.title}',
       onActivate: onTap,
+      onFocusChange: onFocusChange,
       builder: (context, focused) {
         return AnimatedScale(
           scale: focused ? 1.06 : 1.0,
@@ -67,7 +70,7 @@ class PosterCard extends StatelessWidget {
                             const Icon(Icons.star, size: 12, color: AppColors.warning),
                             const SizedBox(width: 2),
                             Text(media.voteAvg.toStringAsFixed(1),
-                                style: const TextStyle(fontSize: 11, color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+                                style: const TextStyle(fontSize: 11, color: AppColors.textPrimary, fontWeight: FontWeight.w700, letterSpacing: 0.3)),
                           ],
                         ),
                       ),
@@ -121,14 +124,15 @@ class PosterCard extends StatelessWidget {
                 fontWeight: FontWeight.bold,
                 fontSize: 14,
                 height: 1.25,
-                shadows: [Shadow(color: Colors.black45, blurRadius: 4)],
+                letterSpacing: 0.2,
+                shadows: [Shadow(color: Colors.black54, blurRadius: 4)],
               ),
             ),
             const Spacer(),
             if (media.year > 0)
               Text(
                 '${media.year}',
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 12, fontWeight: FontWeight.w600),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.85), fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: 0.5),
               ),
           ],
         ),

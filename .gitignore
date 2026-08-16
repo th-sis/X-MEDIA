@@ -1,6 +1,28 @@
 # 工作区级缓存与临时文件（Go/Flutter 构建缓存、冒烟测试数据）
 /.cache/
 /.tmp/
+/screenshots/
+
+# 冒烟测试/临时跑批数据目录（CI/手工 smoke run）
+/server/.tmp_*/
+/server/.tmp/
+
+# Go 构建产物（cmd/xmedia → ./bin/xmedia.exe）
+/server/bin/
+
+# Hermes 审计单测（带 hermesreset/hermesverify build tag，ad-hoc 验证用，不入库）
+server/internal/**/hermes_*.go
+
+# 临时搬迁的二进制（防 antivirus lock 残留）
+/server/.bin_old/
+
+# Flutter 桌面构建产物（runner/Release/profile 等体积巨大）
+/client/build/
+/client/.dart_tool/
+/client/.flutter-plugins
+/client/.flutter-plugins-dependencies
+/client/.pub-cache/
+/client/.pub/
 
 # 系统
 .DS_Store

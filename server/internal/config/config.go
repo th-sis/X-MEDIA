@@ -18,7 +18,7 @@ func Default() Config {
 	return Config{
 		DataDir:    dataDir,
 		DBPath:     filepath.Join(dataDir, "xmedia.db"),
-		ListenAddr: ":8080",
+		ListenAddr: ":38088", // V7 端口约定，与 client 默认 / docker-compose / README 保持一致
 		LogLevel:   "info",
 	}
 }

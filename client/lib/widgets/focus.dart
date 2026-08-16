@@ -10,8 +10,9 @@ class KodiFocus extends StatefulWidget {
   final VoidCallback? onActivate;
   final bool autofocus;
   final String? debugLabel;
+  final ValueChanged<bool>? onFocusChange;
 
-  const KodiFocus({super.key, required this.builder, this.onActivate, this.autofocus = false, this.debugLabel});
+  const KodiFocus({super.key, required this.builder, this.onActivate, this.autofocus = false, this.debugLabel, this.onFocusChange});
 
   @override
   State<KodiFocus> createState() => _KodiFocusState();
@@ -28,8 +29,10 @@ class _KodiFocusState extends State<KodiFocus> {
 
   void _onFocusChange() {
     if (!mounted) return;
+    final has = _node.hasFocus;
+    widget.onFocusChange?.call(has);
     setState(() {});
-    if (_node.hasFocus) {
+    if (has) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && _node.hasFocus) {
           Scrollable.ensureVisible(context, alignment: 0.5, duration: const Duration(milliseconds: 200));

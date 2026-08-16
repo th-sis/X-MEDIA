@@ -4,6 +4,7 @@ import '../models/media.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/resolve_modal.dart';
+import '../widgets/skeleton.dart';
 import 'player_page.dart';
 
 class DetailPage extends StatefulWidget {
@@ -137,7 +138,7 @@ class _DetailPageState extends State<DetailPage> {
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const DetailSkeleton()
           : _detail == null
               ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
                   const Text('加载失败', style: TextStyle(color: AppColors.textSecondary)),
@@ -190,19 +191,19 @@ class _DetailPageState extends State<DetailPage> {
                       children: [
                         const Icon(Icons.star, color: AppColors.warning, size: 18),
                         const SizedBox(width: 4),
-                        Text(s.voteAvg.toStringAsFixed(1), style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+                        Text(s.voteAvg.toStringAsFixed(1), style: AppTypography.body.copyWith(fontWeight: FontWeight.w600)),
                         const SizedBox(width: 12),
-                        Text('${s.year}', style: const TextStyle(color: AppColors.textSecondary)),
+                        Text('${s.year}', style: AppTypography.small),
                         if (s.genres.isNotEmpty) ...[
                           const SizedBox(width: 12),
-                          Text(s.genres.join(' · '), style: const TextStyle(color: AppColors.textSecondary)),
+                          Text(s.genres.join(' · '), style: AppTypography.small),
                         ],
                       ],
                     ),
                     const SizedBox(height: 8),
-                    Text(s.title, style: const TextStyle(fontSize: 30, fontWeight: FontWeight.w800, color: Colors.white)),
+                    Text(s.title, style: AppTypography.display),
                     if (s.titleOrig.isNotEmpty && s.titleOrig != s.title)
-                      Text(s.titleOrig, style: const TextStyle(fontSize: 15, color: Colors.white70)),
+                      Text(s.titleOrig, style: AppTypography.body.copyWith(color: Colors.white70)),
                     const SizedBox(height: 14),
                     Row(
                       children: [
@@ -234,9 +235,9 @@ class _DetailPageState extends State<DetailPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('简介', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                const Text('简介', style: AppTypography.subtitle),
                 const SizedBox(height: 8),
-                Text(s.overview, style: const TextStyle(fontSize: 14, height: 1.6, color: AppColors.textSecondary)),
+                Text(s.overview, style: AppTypography.body.copyWith(height: 1.6, color: AppColors.textSecondary)),
               ],
             ),
           ),
@@ -244,7 +245,7 @@ class _DetailPageState extends State<DetailPage> {
         if (d.isSeries && _seasons.isNotEmpty) ...[
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-            child: const Text('分集', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+            child: const Text('分集', style: AppTypography.subtitle),
           ),
           const SizedBox(height: 8),
           ..._seasons.map((season) => _SeasonPanel(
@@ -276,7 +277,7 @@ class _PrimaryButton extends StatelessWidget {
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(icon, color: Colors.black, size: 22),
             const SizedBox(width: 6),
-            Text(label, style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w700, fontSize: 15)),
+            Text(label, style: AppTypography.body.copyWith(color: Colors.black, fontWeight: FontWeight.w700)),
           ]),
         ),
       ),
@@ -302,7 +303,7 @@ class _GhostButton extends StatelessWidget {
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(icon, color: AppColors.textPrimary, size: 20),
             const SizedBox(width: 6),
-            Text(label, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 14)),
+            Text(label, style: AppTypography.body.copyWith(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 14)),
           ]),
         ),
       ),

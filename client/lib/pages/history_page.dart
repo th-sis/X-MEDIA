@@ -39,10 +39,10 @@ class _HistoryPageState extends State<HistoryPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 24, AppSpacing.xl, 8),
+            padding: const EdgeInsets.fromLTRB(AppSpacing.xl, 16, AppSpacing.xl, 10),
             child: Row(
               children: [
-                const Text('播放历史', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                const Text('播放历史', style: AppTypography.heading),
                 const Spacer(),
                 if (_items.isNotEmpty)
                   TextButton(
@@ -50,7 +50,7 @@ class _HistoryPageState extends State<HistoryPage> {
                       await context.read<AppState>().api.clearHistory();
                       _load();
                     },
-                    child: const Text('清空', style: TextStyle(color: AppColors.textSecondary)),
+                    child: const Text('清空', style: AppTypography.small),
                   ),
               ],
             ),
@@ -59,7 +59,7 @@ class _HistoryPageState extends State<HistoryPage> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _items.isEmpty
-                    ? const Center(child: Text('暂无播放记录', style: TextStyle(color: AppColors.textMuted)))
+                    ? const Center(child: Text('暂无播放记录', style: AppTypography.body))
                     : ListView.builder(
                         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl, vertical: 8),
                         itemCount: _items.length,
@@ -68,9 +68,9 @@ class _HistoryPageState extends State<HistoryPage> {
                           final label = h.season > 0 ? 'S${h.season.toString().padLeft(2, '0')}E${h.episode.toString().padLeft(2, '0')}' : '';
                           return ListTile(
                             leading: _thumb(h),
-                            title: Text(h.title, style: const TextStyle(color: AppColors.textPrimary)),
+                            title: Text(h.title, style: AppTypography.body),
                             subtitle: Text([label, _fmtProgress(h)].where((e) => e.isNotEmpty).join(' · '),
-                                style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+                                style: AppTypography.caption),
                             trailing: const Icon(Icons.play_arrow_rounded, color: AppColors.accent),
                             onTap: () => Navigator.of(context).push(
                               MaterialPageRoute(builder: (_) => DetailPage(externalId: h.externalId, source: h.externalSource)),

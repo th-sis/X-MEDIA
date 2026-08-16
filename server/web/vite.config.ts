@@ -34,15 +34,12 @@ export default defineConfig({
     chunkSizeWarningLimit: 3200,
     rollupOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes('node_modules/three')) {
-            return 'three-vendor';
-          }
-          if (id.includes('node_modules/vue') || id.includes('node_modules/pinia') || id.includes('node_modules/vue-router')) {
-            return 'vue-vendor';
-          }
-        }
-      }
-    }
+        // 禁用按需拆分：defineAsyncComponent 页面与主入口共享模块级状态
+        // （useAdminLoadingBar 的 ref/Set）时，rollup 自动拆包会产生循环
+        // chunk 依赖（TDZ: Cannot access 'R'/'L' before initialization）。
+        // 全部打进主 bundle，牺牲首屏体积换取无循环依赖的确定性。
+        inlineDynamicImports: true,
+      },
+    },
   },
 });

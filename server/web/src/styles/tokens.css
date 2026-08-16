@@ -1,49 +1,57 @@
-/* 全局视觉令牌，主题和皮肤只覆盖变量值。 */
+/* 全局视觉令牌，主题和皮肤只覆盖变量值。
+ * [v7 整改] 与设计文档附录 C Design Token 对齐：
+ *   primary #6E6CF0 / hover #5B59D4 / surface-hover #F5F5FF / bg #F8F9FC
+ *   sidebar #1A1A2E（Material 实心填充）/ text #1A1A2E / muted #9CA3AF
+ *   success #22C55E / warning #F59E0B / error #FF4D4D / info #00E5FF
+ *   radius sm 4 / md 8 / lg 12 / xl 16 / full 9999
+ *   skeleton #E5E7EB / border #E5E7EB
+ */
 :root {
   --brand-start: #6e6cf0;
-  --brand-end: #02a6f0;
+  --brand-end: #5b59d4;
   --brand-gradient: linear-gradient(135deg, var(--brand-start), var(--brand-end));
   --brand-gradient-h: linear-gradient(90deg, var(--brand-start), var(--brand-end));
-  --brand-gradient-h-hover: linear-gradient(90deg, #5b59e0, #1e88e5);
+  --brand-gradient-h-hover: linear-gradient(90deg, #5b59d4, #4a48c0);
   --brand: #6e6cf0;
-  --brand-strong: #5b59e0;
+  --brand-strong: #5b59d4;
 
-  --bg: #f5f7fa;
+  --bg: #f8f9fc;
   --surface: #ffffff;
   --surface-muted: #fafafa;
   --surface-sunken: #f8f9fa;
 
-  --text: #1e293b;
-  --text-regular: #374151;
-  --text-muted: #64748b;
+  --text: #1a1a2e;
+  --text-regular: #6b7280;
+  --text-muted: #9ca3af;
   --text-on-brand: #ffffff;
 
-  --border: #e2e8f0;
-  --border-soft: #f1f5f9;
+  --border: #e5e7eb;
+  --border-soft: #f3f4f6;
 
-  --success: #10b981;
+  --success: #22c55e;
   --warning: #f59e0b;
-  --danger: #ef4444;
-  --info: #1976d2;
-  --info-soft: #e3f2fd;
+  --danger: #ff4d4d;
+  --info: #00e5ff;
+  --info-soft: #e0f7fa;
+  --skeleton: #e5e7eb;
 
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 18px;
-  --radius-pill: 999px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 9999px;
 
   --shadow-card: 0 2px 8px rgba(15, 23, 42, 0.08);
   --shadow-soft: 0 2px 4px rgba(0, 0, 0, 0.1);
   --shadow-pop: 0 8px 24px rgba(15, 23, 42, 0.16);
-  --shadow-brand: 0 2px 4px rgba(76, 116, 223, 0.3);
+  --shadow-brand: 0 2px 4px rgba(110, 108, 240, 0.3);
 
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
-  --space-4: 15px;
-  --space-5: 20px;
-  --space-6: 24px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC",
     "Microsoft YaHei", sans-serif;
@@ -52,11 +60,11 @@
 
   --panel-head-bg: #f9fafb;
   --overlay-scrim: color-mix(in srgb, var(--surface) 75%, transparent);
-  --surface-hover: #f5f7fb;
-  --accent-soft: rgba(76, 116, 223, 0.12);
-  --accent-text: #2563eb;
-  --tab-active-bg: #eff6ff;
-  --tab-active-border: #bfdbfe;
+  --surface-hover: #f5f5ff;
+  --accent-soft: rgba(110, 108, 240, 0.12);
+  --accent-text: #6e6cf0;
+  --tab-active-bg: #f0efff;
+  --tab-active-border: #d6d4ff;
 
   --header-height: 100px;
   --header-logo-height: 50px;
@@ -65,13 +73,14 @@
 
   --transition: 0.2s ease;
 
-  --admin-sidebar-bg: linear-gradient(180deg, var(--brand-start), var(--brand-end));
+  /* Material 实心填充侧栏（附录 C.1 sidebar #1A1A2E） */
+  --admin-sidebar-bg: #1a1a2e;
   --admin-sidebar-border: transparent;
   --admin-sidebar-shadow: none;
-  --admin-nav-hover-bg: rgba(255, 255, 255, 0.15);
-  --admin-nav-active-bg: #fff;
-  --admin-nav-active-color: var(--brand);
-  --admin-nav-active-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  --admin-nav-hover-bg: rgba(255, 255, 255, 0.1);
+  --admin-nav-active-bg: var(--brand);
+  --admin-nav-active-color: #fff;
+  --admin-nav-active-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   --admin-footer-border: rgba(255, 255, 255, 0.18);
 
   /* 叠层：dropdown < modal < popover(Modal 内 Select 等) < confirm < toast */
@@ -85,11 +94,11 @@
 }
 
 :root[data-theme="dark"] {
-  --brand-start: #1e40af;
-  --brand-end: #0f766e;
-  --brand: #3b82f6;
-  --brand-strong: #2563eb;
-  --brand-gradient-h-hover: linear-gradient(90deg, #1d4ed8, #0e7490);
+  --brand-start: #6e6cf0;
+  --brand-end: #5b59d4;
+  --brand: #7c7af5;
+  --brand-strong: #5b59d4;
+  --brand-gradient-h-hover: linear-gradient(90deg, #5b59d4, #4a48c0);
 
   --bg: #101215;
   --surface: #181b20;
@@ -103,36 +112,39 @@
   --border: #2b3038;
   --border-soft: #23272e;
 
-  --info: #60a5fa;
+  --success: #22c55e;
+  --danger: #ff4d4d;
+  --info: #00e5ff;
   --info-soft: #1e293b;
+
+  --panel-head-bg: #1d2127;
+  --overlay-scrim: color-mix(in srgb, var(--bg) 82%, transparent);
+  --surface-hover: #23272e;
+  --accent-soft: rgba(110, 108, 240, 0.18);
+  --accent-text: #a5a3f7;
+  --tab-active-bg: rgba(110, 108, 240, 0.15);
+  --tab-active-border: rgba(110, 108, 240, 0.35);
 
   --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.4);
   --shadow-soft: 0 2px 4px rgba(0, 0, 0, 0.35);
   --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
 
-  --admin-sidebar-bg: linear-gradient(
-    135deg,
-    rgba(28, 51, 111, 0.98) 0%,
-    rgba(24, 92, 139, 0.96) 52%,
-    rgba(8, 145, 178, 0.92) 100%
-  );
+  --admin-sidebar-bg: #1a1a2e;
   --admin-sidebar-border: rgba(148, 163, 184, 0.14);
   --admin-sidebar-shadow: 0 18px 46px rgba(2, 6, 23, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --admin-nav-hover-bg: rgba(255, 255, 255, 0.08);
-  --admin-nav-active-bg: rgba(59, 130, 246, 0.18);
-  --admin-nav-active-color: #dbeafe;
+  --admin-nav-hover-bg: rgba(255, 255, 255, 0.1);
+  --admin-nav-active-bg: var(--brand);
+  --admin-nav-active-color: #fff;
   --admin-nav-active-shadow: none;
   --admin-footer-border: rgba(148, 163, 184, 0.16);
+}
 
-  --panel-head-bg: #1d2127;
-  --overlay-scrim: color-mix(in srgb, var(--bg) 82%, transparent);
-  --surface-hover: #23272e;
-  --accent-soft: rgba(59, 130, 246, 0.18);
-  --accent-text: #93c5fd;
-  --tab-active-bg: rgba(59, 130, 246, 0.15);
-  --tab-active-border: rgba(59, 130, 246, 0.35);
-
-  color-scheme: dark;
+:root[data-density="compact"] {
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 20px;
+  --header-height: 88px;
+  --header-logo-height: 44px;
 }
 
 /* 野兽派皮肤独立于主题并通过源码顺序覆盖暗色变量。 */

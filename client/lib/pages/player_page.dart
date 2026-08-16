@@ -166,6 +166,16 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
               const SizedBox(width: 8),
               Expanded(child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600))),
+              // [v7 整改] 演示视频角标（§11.1 demo_fallback 来源透明化）
+              if (widget.playSource == 'demo')
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.85),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  child: const Text('演示', style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.w700)),
+                ),
             ],
           ),
         ),

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref } from "vue";
+import { computed, defineAsyncComponent, onMounted, ref, watch } from "vue";
 import { accountsApi } from "@/api/accounts";
 import { clearCache, fetchCacheStats, type CacheStats } from "@/api/cache";
 import {
@@ -11,6 +11,7 @@ import {
 import { getApiErrorMessage } from "@/api/client";
 import { logsApi, type LogStats } from "@/api/logs";
 import { fetchNotifications, fetchUnreadCount, type NotificationItem } from "@/api/notifications";
+import { fetchSnapshot, fetchHealth, type Capabilities, type HealthStatus } from "@/api/xmedia";
 import type { Account } from "@/api/types";
 import SectionTabBar from "@/components/admin/SectionTabBar.vue";
 import AppCardActionButton from "@/components/base/AppCardActionButton.vue";
@@ -55,7 +56,12 @@ type OverviewResult =
   | CacheStats
   | { items: NotificationItem[] }
   | { count: number }
-  | LogStats;
+  | LogStats
+  // V7 §27.1 健康检查 + §28.3 启动状态（保留联合类型，便于未来扩展 assignSettled 约束）
+  | { capabilities?: unknown }
+  | { status: string; validation: unknown };
+// 占位以避免 unused 类型告警
+void (0 as unknown as OverviewResult);
 
 const accountCount = computed(() => accounts.value.length);
 const activeAccountCount = computed(() => accounts.value.filter((account) => account.is_active).length);
@@ -73,12 +79,63 @@ const totalTaskCount = computed(
 );
 const recentErrorCount = computed(() => logStats.value?.recent_unacknowledged_errors ?? 0);
 const recentErrorTotal = computed(() => logStats.value?.recent_errors ?? 0);
+
+// X-MEDIA 健康检查（V7 §27.1 / §27.4）：首屏 §27 自检清单。
+const xMediaSnapshot = ref<Capabilities | null>(null);
+const xMediaHealth = ref<HealthStatus | null>(null);
+// V7 §28.3:stateSnapshot 用于 startup banner（uptime + last_restart_reason）。
+const stateSnapshot = ref<import("@/api/xmedia").StateSnapshot | null>(null);
+
+const nasAvailable = computed(() => !!xMediaSnapshot.value?.nas_available);
+const nasIndexComplete = computed(() => !!xMediaSnapshot.value?.nas_index_complete);
+const loggedInDrivers = computed(() => xMediaSnapshot.value?.logged_in_drivers ?? []);
+
+const tmdbStatus = computed(() => xMediaHealth.value?.validation?.tmdb_key?.status ?? "unknown");
+const pansearchStatus = computed(() => xMediaHealth.value?.validation?.pansearch_url?.status ?? "unknown");
+const accountStatus = computed(() => xMediaHealth.value?.validation?.has_any_account?.status ?? "unknown");
+
+const tmdbOk = computed(() => tmdbStatus.value === "ok");
+const pansearchOk = computed(() => pansearchStatus.value === "ok");
+const accountOk = computed(() => accountStatus.value === "ok");
+const nasOk = computed(() => nasAvailable.value);
+const indexOk = computed(() => nasIndexComplete.value);
+
+const healthyChips = computed(() => [
+  { key: "tmdb", label: "TMDB", ok: tmdbOk.value, message: tmdbOk.value ? "已连接" : (xMediaHealth.value?.validation?.tmdb_key?.message ?? "未配置") },
+  { key: "pansearch", label: "PanSou", ok: pansearchOk.value, message: pansearchOk.value ? "可用" : (xMediaHealth.value?.validation?.pansearch_url?.message ?? "不可达") },
+  { key: "account", label: "网盘账号", ok: accountOk.value, message: accountOk.value ? `${loggedInDrivers.value.length} 个已登录` : (loggedInDrivers.value.length === 0 ? "未登录" : `${loggedInDrivers.value.length} 个已登录`) },
+  { key: "nas", label: "NAS", ok: nasOk.value, message: nasOk.value ? "可用" : "未配置" },
+  { key: "index", label: "索引", ok: indexOk.value, message: indexOk.value ? "已完成" : "未完成" },
+]);
+
+const recentlyRestarted = computed(() => {
+  const snap = stateSnapshot.value;
+  return snap ? snap.server_uptime_secs < 60 : false;
+});
+const recentlyRestartedSeconds = computed(() => {
+  const snap = stateSnapshot.value;
+  return snap ? 60 - snap.server_uptime_secs : 60;
+});
+const lastRestartReason = ref<string>("graceful");
+// 监听 state/snapshot 变化时同步 last_restart_reason
+watch(stateSnapshot, (snap) => {
+  if (snap?.last_restart_reason) lastRestartReason.value = snap.last_restart_reason;
+});
 const systemStatus = computed(() => {
+  if (!tmdbOk.value) {
+    return { label: "未配置 TMDB（演示模式）", tone: "warn", icon: "fa-triangle-exclamation" };
+  }
   if (authErrorAccountCount.value > 0) {
     return { label: "账号需要重新授权", tone: "danger", icon: "fa-triangle-exclamation" };
   }
   if (cooldownAccountCount.value > 0) {
     return { label: "账号认证冷却中", tone: "warn", icon: "fa-clock" };
+  }
+  if (!pansearchOk.value) {
+    return { label: "盘搜不可用（搜索降级）", tone: "warn", icon: "fa-circle-info" };
+  }
+  if (!accountOk.value) {
+    return { label: "未登录任何网盘（仅演示播放）", tone: "warn", icon: "fa-circle-info" };
   }
   if (recentErrorCount.value > 0) return { label: "需要留意", tone: "warn", icon: "fa-triangle-exclamation" };
   if (inactiveAccountCount.value > 0) return { label: "部分账号未启用", tone: "warn", icon: "fa-circle-info" };
@@ -135,14 +192,17 @@ async function loadOverview() {
   loadError.value = "";
   try {
     const requests = [
-      accountsApi.list(),
-      fetchCacheRetentionTasks(),
-      fetchCacheRetentionStats(),
-      fetchCacheStats(),
-      fetchNotifications({ limit: 3, offset: 0 }),
-      fetchUnreadCount(),
-      logsApi().stats(),
-    ] as const;
+          accountsApi.list(),
+          fetchCacheRetentionTasks(),
+          fetchCacheRetentionStats(),
+          fetchCacheStats(),
+          fetchNotifications({ limit: 3, offset: 0 }),
+          fetchUnreadCount(),
+          logsApi().stats(),
+          // V7 §27.1：能力预检 + 健康检查，并入首屏概览。
+          fetchSnapshot().catch(() => null),
+          fetchHealth().catch(() => null),
+        ] as const;
     const results = await Promise.allSettled(requests);
     const failed = results.find((result) => result.status === "rejected");
 
@@ -166,6 +226,13 @@ async function loadOverview() {
     });
     assignSettled(results[6], (value) => {
       logStats.value = value;
+    });
+    assignSettled(results[7], (value) => {
+      stateSnapshot.value = value as import("@/api/xmedia").StateSnapshot | null;
+      xMediaSnapshot.value = (value as { capabilities?: unknown })?.capabilities as Capabilities | null ?? null;
+    });
+    assignSettled(results[8], (value) => {
+      xMediaHealth.value = value as HealthStatus;
     });
 
     if (failed?.status === "rejected") {
@@ -201,7 +268,7 @@ function handleLogStatsAcked(next: LogStats) {
   logStats.value = next;
 }
 
-function assignSettled<T extends OverviewResult>(
+function assignSettled<T>(
   result: PromiseSettledResult<T>,
   assign: (value: T) => void,
 ) {
@@ -346,8 +413,14 @@ onMounted(() => {
     <SectionTabBar :model-value="activeTab" :tabs="tabs" @update:model-value="setActiveTab" />
 
     <div v-if="activeTab === OVERVIEW_TAB && !loading" class="dashboard-overview">
-      <section
-        class="dashboard-hero"
+          <!-- V7 §28 启动序：刚启动提示 + last_restart_reason -->
+          <AdminStartupBanner
+            v-if="recentlyRestarted"
+            :seconds="recentlyRestartedSeconds"
+            :reason="lastRestartReason"
+          />
+          <section
+            class="dashboard-hero"
         :class="[`dashboard-hero--${systemStatus.tone}`, { 'dashboard-hero--actionable': canJumpToErrorLogs }]"
         :role="canJumpToErrorLogs ? 'button' : undefined"
         :tabindex="canJumpToErrorLogs ? 0 : undefined"
@@ -439,6 +512,35 @@ onMounted(() => {
             <span>未读通知</span>
           </div>
         </article>
+      </section>
+
+      <!-- V7 §27.1/§27.4：首屏健康概览卡，每个 chip 一键跳到对应配置入口。 -->
+      <section class="dashboard-health-card" aria-label="V7 §27 系统健康概览">
+        <header class="dashboard-health-card__head">
+          <div>
+            <h3>系统健康概览</h3>
+            <p>TMDB / PanSou / 网盘账号 / NAS / 索引 五个子系统状态（V7 §27.1）</p>
+          </div>
+          <router-link class="dashboard-link-button" to="/admin?page=x-media">
+            <i class="fas fa-sliders" />去配置
+          </router-link>
+        </header>
+        <div class="dashboard-health-chip-grid">
+          <router-link
+            v-for="chip in healthyChips"
+            :key="chip.key"
+            class="dashboard-health-chip"
+            :class="{ 'is-ok': chip.ok, 'is-warn': !chip.ok }"
+            :to="chip.key === 'account' ? '/admin?page=accounts' : '/admin?page=x-media'"
+          >
+            <i
+              class="fas"
+              :class="chip.ok ? 'fa-circle-check' : 'fa-triangle-exclamation'"
+            />
+            <span class="dashboard-health-chip__label">{{ chip.label }}</span>
+            <span class="dashboard-health-chip__msg">{{ chip.message }}</span>
+          </router-link>
+        </div>
       </section>
 
       <section class="dashboard-layout">
@@ -1245,10 +1347,87 @@ onMounted(() => {
     grid-column: 2;
     justify-self: start;
   }
+}
 
-  .method-tag,
-  .status-tag {
-    justify-self: start;
-  }
+/* V7 §27.1/§27.4:首屏健康概览卡 */
+.dashboard-health-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  padding: 16px 20px;
+}
+
+.dashboard-health-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.dashboard-health-card__head h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dashboard-health-card__head p {
+  font-size: 12px;
+  color: var(--color-text-secondary, #6b7280);
+}
+
+.dashboard-health-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.dashboard-health-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.dashboard-health-chip:hover {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 6%, var(--surface));
+}
+
+.dashboard-health-chip.is-ok {
+  border-color: color-mix(in srgb, var(--ok, #22c55e) 30%, var(--border-soft));
+}
+
+.dashboard-health-chip.is-ok i {
+  color: var(--ok, #22c55e);
+}
+
+.dashboard-health-chip.is-warn {
+  border-color: color-mix(in srgb, var(--warn, #f59e0b) 35%, var(--border-soft));
+}
+
+.dashboard-health-chip.is-warn i {
+  color: var(--warn, #f59e0b);
+}
+
+.dashboard-health-chip__label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.dashboard-health-chip__msg {
+  font-size: 12px;
+  color: var(--color-text-secondary, #6b7280);
+  margin-left: auto;
+  text-align: right;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

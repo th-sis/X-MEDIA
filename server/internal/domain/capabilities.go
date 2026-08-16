@@ -11,8 +11,9 @@ type Capabilities struct {
 	NASProcessedFiles  int      `json:"nas_processed_files"`
 	NASTotalFiles      int      `json:"nas_total_files"`
 	// [v7 整改] P2 磁力下载是否启用
-	MagnetEnabled bool `json:"magnet_enabled"`
+	MagnetEnabled bool    `json:"magnet_enabled"`
+	P0MinScore    float64 `json:"p0_min_score"`
 	// [v7 整改] 演示兜底开关
-	DemoFallback bool `json:"demo_fallback"`
+	DemoFallback  bool   `json:"demo_fallback"`
 	ServerVersion string `json:"server_version"`
 }

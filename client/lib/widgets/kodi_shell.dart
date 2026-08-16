@@ -1,33 +1,50 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/app_state.dart';
-import '../theme/app_theme.dart';
-import 'focus.dart';
+
 import '../pages/home_page.dart';
 import '../pages/category_page.dart';
 import '../pages/search_page.dart';
 import '../pages/history_page.dart';
+import '../pages/favorites_page.dart';
 import '../pages/subscriptions_page.dart';
 import '../pages/settings_page.dart';
+import '../theme/app_theme.dart';
+import 'focus.dart';
+import '../services/app_state.dart';
 
-class _NavItem {
-  final String label;
-  final IconData icon;
-  const _NavItem(this.label, this.icon);
+/// 顶部分类条目（5 个，固定）。点击导航到对应 CategoryPage。
+class _CategoryTab {
+  final String english;
+  final String chinese;
+  final String type; // API mediaType
+  const _CategoryTab(this.english, this.chinese, this.type);
 }
 
-const _navItems = <_NavItem>[
-  _NavItem('首页', Icons.home_rounded),
-  _NavItem('电影', Icons.movie_rounded),
-  _NavItem('剧集', Icons.live_tv_rounded),
-  _NavItem('综艺', Icons.mic_rounded),
-  _NavItem('动漫', Icons.animation_rounded),
-  _NavItem('纪录', Icons.public_rounded),
-  _NavItem('搜索', Icons.search_rounded),
-  _NavItem('历史', Icons.history_rounded),
-  _NavItem('订阅', Icons.notifications_active_rounded),
-  _NavItem('设置', Icons.settings_rounded),
+const _kCategoryTabs = <_CategoryTab>[
+  _CategoryTab('FILMS', '电影', 'movie'),
+  _CategoryTab('TV', '电视', 'tv'),
+  _CategoryTab('VARIETY', '综艺', 'variety'),
+  _CategoryTab('ANIME', '动漫', 'anime'),
+  _CategoryTab('DOCS', '纪录', 'documentary'),
+];
+
+/// 底部主导航条目（6 个，页面级）。
+class _PageNav {
+  final String english;
+  final String chinese;
+  final IconData icon;
+  final WidgetBuilder builder;
+  const _PageNav(this.english, this.chinese, this.icon, this.builder);
+}
+
+final _kPageNavs = <_PageNav>[
+  _PageNav('EXPLORE', '探索', Icons.explore_rounded, (_) => const HomePage()),
+  _PageNav('SEARCH', '搜索', Icons.search_rounded, (_) => const SearchPage()),
+  _PageNav('HISTORY', '历史', Icons.history_rounded, (_) => const HistoryPage()),
+  _PageNav('FAVORITES', '收藏', Icons.favorite_rounded, (_) => const FavoritesPage()),
+  _PageNav('SUBS', '订阅', Icons.notifications_active_rounded, (_) => const SubscriptionsPage()),
+  _PageNav('SETTINGS', '设置', Icons.settings_rounded, (_) => const SettingsPage()),
 ];
 
 class KodiShell extends StatefulWidget {
@@ -38,7 +55,13 @@ class KodiShell extends StatefulWidget {
 }
 
 class _KodiShellState extends State<KodiShell> {
-  int _index = 0;
+  /// 当前底部页面索引（-1 表示正在顶部分类页，不属于任何底部条目）
+  int _pageIndex = 0;
+  /// 当前顶部分类索引（-1 表示不在分类页）
+  int _categoryIndex = -1;
+  /// 自定义子页面栈（顶部分类点击会 push 到这里；返回时回到主页面栈）
+  final List<Widget> _stack = [];
+
   Timer? _clockTimer;
   DateTime _now = DateTime.now();
 
@@ -56,82 +79,116 @@ class _KodiShellState extends State<KodiShell> {
     super.dispose();
   }
 
-  Widget _buildPage(int i) {
-    switch (i) {
-      case 0: return const HomePage();
-      case 1: return const CategoryPage(type: 'movie', title: '电影');
-      case 2: return const CategoryPage(type: 'tv', title: '剧集');
-      case 3: return const CategoryPage(type: 'variety', title: '综艺');
-      case 4: return const CategoryPage(type: 'anime', title: '动漫');
-      case 5: return const CategoryPage(type: 'documentary', title: '纪录');
-      case 6: return const SearchPage();
-      case 7: return const HistoryPage();
-      case 8: return const SubscriptionsPage();
-      case 9: return const SettingsPage();
-      default: return const HomePage();
+  // ===== 导航动作 =====
+
+  void _selectCategory(int i) {
+    final tab = _kCategoryTabs[i];
+    final page = CategoryPage(type: tab.type, title: tab.chinese);
+    setState(() {
+      _categoryIndex = i;
+      _pageIndex = -1; // 离开底部栈
+      _stack.add(page);
+    });
+  }
+
+  void _selectPage(int i) {
+    setState(() {
+      _pageIndex = i;
+      _categoryIndex = -1; // 离开顶部分类
+      _stack.clear();
+    });
+  }
+
+  void _onBack() {
+    if (_stack.isNotEmpty) {
+      setState(() {
+        _stack.removeLast();
+        if (_stack.isEmpty) {
+          _categoryIndex = -1;
+          _pageIndex = 0; // 回到默认首页
+        }
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FocusTraversalGroup(
-      policy: KodiTraversalPolicy(),
-      child: Stack(
-        children: [
-          const _Background(),
-          Row(
-            children: [
-              _Sidebar(
-                selected: _index,
-                onSelect: (i) => setState(() => _index = i),
+    // 当前 body：栈非空就显示栈顶；否则按底部 page 渲染
+    final Widget body;
+    if (_stack.isNotEmpty) {
+      body = _stack.last;
+    } else {
+      body = _kPageNavs[_pageIndex.clamp(0, _kPageNavs.length - 1)].builder(context);
+    }
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _onBack();
+      },
+      child: ColoredBox(
+        color: AppColors.background,
+        child: Column(
+          children: [
+            _TopBar(
+              now: _now,
+              categoryIndex: _categoryIndex,
+              pageIndex: _pageIndex,
+              onCategoryTap: _selectCategory,
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  const Positioned.fill(child: _Background()),
+                  Positioned.fill(child: KeyedSubtree(key: ValueKey(_currentKey()), child: body)),
+                ],
               ),
-              const SizedBox(width: 1, height: double.infinity, child: ColoredBox(color: Colors.white12)),
-              Expanded(
-                child: ClipRect(
-                  child: KeyedSubtree(
-                    key: ValueKey(_index),
-                    child: _buildPage(_index),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          // 顶部时钟 + 连接状态（Kodi 风格右上角）
-          Positioned(
-            top: 18,
-            right: 28,
-            child: _Clock(now: _now),
-          ),
-        ],
+            ),
+            _BottomBar(
+              pageIndex: _pageIndex,
+              onSelect: _selectPage,
+            ),
+          ],
+        ),
       ),
     );
   }
+
+  String _currentKey() {
+    if (_stack.isNotEmpty) return 'stack:${_stack.length}';
+    return 'page:$_pageIndex';
+  }
 }
+
+// ============== 背景 ==============
 
 class _Background extends StatelessWidget {
   const _Background();
-
   @override
   Widget build(BuildContext context) {
-    return Positioned.fill(
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF0B0F1A), Color(0xFF0E1320), Color(0xFF0A0D14)],
+        ),
+      ),
       child: DecoratedBox(
         decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              const Color(0xFF12151C),
-              const Color(0xFF141414),
-              const Color(0xFF0E1B24),
-            ],
+          gradient: RadialGradient(
+            center: const Alignment(0.2, -0.4),
+            radius: 1.3,
+            colors: [AppColors.accent.withValues(alpha: 0.08), Colors.transparent],
           ),
         ),
         child: DecoratedBox(
           decoration: BoxDecoration(
             gradient: RadialGradient(
-              center: const Alignment(0.9, -0.9),
-              radius: 1.4,
-              colors: [AppColors.accent.withValues(alpha: 0.06), Colors.transparent],
+              center: const Alignment(1.2, 1.4),
+              radius: 1.0,
+              colors: [AppColors.accentGlow.withValues(alpha: 0.10), Colors.transparent],
             ),
           ),
         ),
@@ -140,59 +197,75 @@ class _Background extends StatelessWidget {
   }
 }
 
-class _Sidebar extends StatelessWidget {
-  final int selected;
-  final ValueChanged<int> onSelect;
-  const _Sidebar({required this.selected, required this.onSelect});
+// ============== 顶部栏：Logo + 5 分类 + 时钟 + 连接徽章 ==============
+
+class _TopBar extends StatelessWidget {
+  final DateTime now;
+  final int categoryIndex;
+  final int pageIndex;
+  final void Function(int) onCategoryTap;
+
+  const _TopBar({
+    required this.now,
+    required this.categoryIndex,
+    required this.pageIndex,
+    required this.onCategoryTap,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final badges = sourceBadgesFromCapabilities(
+      nasAvailable: app.capabilities.nasAvailable,
+      pansearchAvailable: app.capabilities.pansearchAvailable,
+      loggedInDrivers: app.capabilities.loggedInDrivers,
+    );
+
     return Container(
-      width: 210,
-      color: AppColors.sidebar.withValues(alpha: 0.92),
-      child: Column(
+      height: 80,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        border: const Border(bottom: BorderSide(color: Colors.white10, width: 1)),
+      ),
+      child: Row(
         children: [
-          // Logo
-          const SizedBox(height: 24),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Row(
-              children: [
-                Container(
-                  width: 34, height: 34,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(colors: [AppColors.accent, AppColors.info]),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(Icons.play_arrow_rounded, color: Colors.black, size: 24),
-                ),
-                const SizedBox(width: 10),
-                const Text('X-MEDIA',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.textPrimary, letterSpacing: 1)),
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-          // 导航项
+          // Logo + 名称
+          const _LogoMark(),
+          const SizedBox(width: 12),
+          const Text('X-MEDIA',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppColors.textPrimary, letterSpacing: 1.2)),
+          const SizedBox(width: 18),
+          // 5 个顶部分类 Tab
           Expanded(
             child: FocusTraversalGroup(
               policy: KodiTraversalPolicy(),
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                itemCount: _navItems.length,
-                itemBuilder: (context, i) => _SidebarItem(
-                  item: _navItems[i],
-                  selected: selected == i,
-                  autofocus: i == 0,
-                  onActivate: () => onSelect(i),
-                ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: List.generate(_kCategoryTabs.length, (i) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 28),
+                    child: _CategoryTabButton(
+                      tab: _kCategoryTabs[i],
+                      active: categoryIndex == i,
+                      onActivate: () => onCategoryTap(i),
+                    ),
+                  );
+                }),
               ),
             ),
           ),
-          // 底部连接状态
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: _ConnectionDot(),
+          // 右侧：连接徽章 + 时钟
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _SourceBadges(badges: badges),
+                const SizedBox(width: 12),
+                _ClockBlock(now: now),
+              ],
+            ),
           ),
         ],
       ),
@@ -200,84 +273,214 @@ class _Sidebar extends StatelessWidget {
   }
 }
 
-class _SidebarItem extends StatelessWidget {
-  final _NavItem item;
-  final bool selected;
-  final bool autofocus;
-  final VoidCallback onActivate;
-
-  const _SidebarItem({required this.item, required this.selected, this.autofocus = false, required this.onActivate});
-
+class _LogoMark extends StatelessWidget {
+  const _LogoMark();
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: KodiFocus(
-        autofocus: autofocus,
-        onActivate: onActivate,
-        debugLabel: 'nav:${item.label}',
-        builder: (context, focused) {
-          final active = focused || selected;
-          return AnimatedContainer(
-            duration: AppDuration.normal,
-            height: 46,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            decoration: BoxDecoration(
-              color: focused ? AppColors.accent.withValues(alpha: 0.14) : (selected ? Colors.white.withValues(alpha: 0.06) : Colors.transparent),
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              border: focused ? Border.all(color: AppColors.accent.withValues(alpha: 0.6)) : null,
-            ),
-            child: Row(
-              children: [
-                Icon(item.icon, size: 22, color: active ? AppColors.accent : AppColors.textSecondary),
-                const SizedBox(width: 14),
-                Text(item.label,
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: active ? AppColors.textPrimary : AppColors.textSecondary,
-                      fontWeight: active ? FontWeight.w600 : FontWeight.w400,
-                    )),
-                if (selected) ...[
-                  const Spacer(),
-                  Container(width: 4, height: 4, decoration: const BoxDecoration(color: AppColors.accent, shape: BoxShape.circle)),
-                ],
-              ],
-            ),
-          );
-        },
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [AppColors.accent, Color(0xFF8B5CF6)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(10),
+        boxShadow: [
+          BoxShadow(color: AppColors.accent.withValues(alpha: 0.4), blurRadius: 12, spreadRadius: 0.5),
+        ],
       ),
+      child: const Icon(Icons.play_arrow_rounded, color: Colors.black, size: 26),
     );
   }
 }
 
-class _ConnectionDot extends StatelessWidget {
+/// 单个顶部分类按钮：默认英文大写，聚焦/选中切中文，透明大字号。
+class _CategoryTabButton extends StatelessWidget {
+  final _CategoryTab tab;
+  final bool active;
+  final VoidCallback onActivate;
+  const _CategoryTabButton({required this.tab, required this.active, required this.onActivate});
+
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final online = app.wsConnected;
-    final color = online ? AppColors.success : AppColors.warning;
+    return KodiFocus(
+      onActivate: onActivate,
+      debugLabel: 'top:${tab.english}',
+      builder: (context, focused) {
+        final emphasized = focused || active;
+        return AnimatedContainer(
+          duration: AppDuration.normal,
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            border: Border(
+              bottom: BorderSide(
+                color: active ? AppColors.selection : Colors.transparent,
+                width: 2.5,
+              ),
+            ),
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: AnimatedDefaultTextStyle(
+              duration: AppDuration.normal,
+              style: emphasized
+                  ? (active ? AppTypography.navChineseActive : AppTypography.navChinese)
+                  : AppTypography.navEnglish,
+              child: Text(emphasized ? tab.chinese : tab.english.toUpperCase()),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 数据源连接徽章（NAS / PANSOU / 网盘 / LOCAL）。
+class _SourceBadges extends StatelessWidget {
+  final List<SourceBadge> badges;
+  const _SourceBadges({required this.badges});
+
+  @override
+  Widget build(BuildContext context) {
+    if (badges.isEmpty) return const SizedBox.shrink();
     return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: badges.map((b) => Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            margin: const EdgeInsets.only(right: 6),
+            decoration: BoxDecoration(
+              color: b.color.withValues(alpha: 0.15),
+              border: Border.all(color: b.color.withValues(alpha: 0.55), width: 1),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              b.label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: b.color,
+                letterSpacing: 0.4,
+              ),
+            ),
+          )).toList(),
+    );
+  }
+}
+
+class _ClockBlock extends StatelessWidget {
+  final DateTime now;
+  const _ClockBlock({required this.now});
+
+  @override
+  Widget build(BuildContext context) {
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-        const SizedBox(width: 8),
-        Text(online ? '已连接' : '连接中...',
-            style: const TextStyle(fontSize: 12, color: AppColors.textMuted)),
-        const Spacer(),
-        Text('v${app.capabilities.serverVersion.isEmpty ? '7.0' : app.capabilities.serverVersion}',
-            style: const TextStyle(fontSize: 11, color: AppColors.textMuted)),
+        Text('$hh:$mm',
+            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w300, color: Colors.white, letterSpacing: 1.5)),
       ],
     );
   }
 }
 
-class _Clock extends StatelessWidget {
-  final DateTime now;
-  const _Clock({required this.now});
+// ============== 底栏：6 个页面级导航 ==============
+
+class _BottomBar extends StatelessWidget {
+  final int pageIndex;
+  final ValueChanged<int> onSelect;
+  const _BottomBar({required this.pageIndex, required this.onSelect});
 
   @override
   Widget build(BuildContext context) {
-    String two(int n) => n.toString().padLeft(2, '0');
-    final time = '${two(now.hour)}:${two(now.minute)}';
-    return Text(time, style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w200, color: Colors.white70));
+    return Container(
+      height: 90,
+      decoration: const BoxDecoration(
+        color: AppColors.background,
+        border: Border(top: BorderSide(color: Colors.white10, width: 1)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 6),
+        child: FocusTraversalGroup(
+          policy: KodiTraversalPolicy(),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: List.generate(_kPageNavs.length, (i) {
+              return Expanded(
+                child: _PageNavButton(
+                  nav: _kPageNavs[i],
+                  active: pageIndex == i,
+                  onActivate: () => onSelect(i),
+                ),
+              );
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 单个底部导航按钮：默认大写英文，聚焦切中文，激活态中文 + 强调下划线。
+class _PageNavButton extends StatelessWidget {
+  final _PageNav nav;
+  final bool active;
+  final VoidCallback onActivate;
+  const _PageNavButton({required this.nav, required this.active, required this.onActivate});
+
+  @override
+  Widget build(BuildContext context) {
+    return KodiFocus(
+      onActivate: onActivate,
+      debugLabel: 'bottom:${nav.english}',
+      builder: (context, focused) {
+        final emphasized = focused || active;
+        return AnimatedContainer(
+          duration: AppDuration.normal,
+          curve: Curves.easeOut,
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            border: Border(
+              top: BorderSide(
+                color: active ? AppColors.selection : Colors.transparent,
+                width: 2.5,
+              ),
+            ),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                nav.icon,
+                size: emphasized ? 18 : 16,
+                color: emphasized
+                    ? (active ? AppColors.accent : AppColors.textPrimary)
+                    : AppColors.textSecondary,
+              ),
+              const SizedBox(height: 3),
+              AnimatedDefaultTextStyle(
+                duration: AppDuration.normal,
+                style: emphasized
+                    ? (active ? AppTypography.navChineseActive : AppTypography.navChinese)
+                    : AppTypography.navEnglish,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    emphasized ? nav.chinese : nav.english.toUpperCase(),
+                    maxLines: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
