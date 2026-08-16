@@ -29,23 +29,24 @@ const (
 
 // ResolveTask 播放解析任务。
 type ResolveTask struct {
-	ID              int64        `json:"id"`
-	ExternalID      int64        `json:"external_id"`
-	ExternalSource  string       `json:"external_source"`
-	MediaType       string       `json:"media_type"`
-	Title           string       `json:"title"`
-	Year            int          `json:"year"`
-	Season          int          `json:"season"`
-	Episode         int          `json:"episode"`
+	ID              int64         `json:"id"`
+	ExternalID      int64         `json:"external_id"`
+	ExternalSource  string        `json:"external_source"`
+	MediaType       string        `json:"media_type"`
+	Title           string        `json:"title"`
+	Year            int           `json:"year"`
+	Season          int           `json:"season"`
+	Episode         int           `json:"episode"`
 	Status          ResolveStatus `json:"status"`
-	Stage           ResolveStage `json:"stage"`
-	StageDetail     string       `json:"stage_detail"`
-	ProgressPct     int          `json:"progress_pct"`
-	ResultSource    string       `json:"result_source"`
-	ResultFileID    string       `json:"result_file_id"`
-	ResultAccountID int64        `json:"result_account_id"`
-	ResultFilePath  string       `json:"result_file_path"`
-	ErrorMsg        string       `json:"error_msg"`
-	CreatedAt       time.Time    `json:"created_at"`
-	UpdatedAt       time.Time    `json:"updated_at"`
+	Stage           ResolveStage  `json:"stage"`
+	StageDetail     string        `json:"stage_detail"`
+	ProgressPct     int           `json:"progress_pct"`
+	ResultSource    string        `json:"result_source"`
+	ResultFileID    string        `json:"result_file_id"`
+	ResultAccountID int64         `json:"result_account_id"`
+	ResultFilePath  string        `json:"result_file_path"`
+	OfflineTaskID   string        `json:"offline_task_id"` // [P0-2] P2 磁力下载的驱动任务 ID（启动恢复用）
+	ErrorMsg        string        `json:"error_msg"`
+	CreatedAt       time.Time     `json:"created_at"`
+	UpdatedAt       time.Time     `json:"updated_at"`
 }

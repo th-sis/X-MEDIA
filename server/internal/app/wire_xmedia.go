@@ -7,6 +7,7 @@ import (
 
 	"xmedia/internal/account"
 	"xmedia/internal/domain"
+	"xmedia/internal/driver"
 	"xmedia/internal/logx"
 	"xmedia/internal/media"
 	"xmedia/internal/pansearch"
@@ -29,7 +30,7 @@ type xmediaBundle struct {
 	rateLimiter *resolve.RateLimiter
 }
 
-func wireXMedia(st *storeBundle, svc *servicesBundle, logs *logx.Manager) *xmediaBundle {
+func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *logx.Manager) *xmediaBundle {
 	tmdbSvc := tmdb.NewService(st.store.Configs, st.store.MediaLibrary)
 	mediaSvc := media.NewService(media.Options{
 		PlayHistory:   st.store.PlayHistory,
@@ -49,12 +50,31 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, logs *logx.Manager) *xmedi
 		MediaIndex:      st.store.MediaIndex,
 		Subscriptions:   st.store.Subscriptions,
 		Configs:         st.store.Configs,
+		MediaLibrary:    st.store.MediaLibrary,
 		PansearchHealth: pansearchSvc.Health,
 		LoggedInDrivers: loggedInDriversFn(svc.account),
 		NASConfigured:   nasConfiguredFn(st.store.Configs),
-		Signer:          signer,
-		Hub:             hub,
-		ServerVersion:   xmediaVersion,
+		// [v7 整改] 智能跳过 P0：查询索引条数
+		IndexCount: func(ctx context.Context) (int, error) {
+			return st.store.MediaIndex.Count(ctx)
+		},
+		// [v7 整改] P2 磁力兜底：PanSou 搜索 magnet/ed2k
+		PansearchSearch: pansearchSvc.Search,
+		// [P0-2] P1 盘搜：链接有效性批量检测
+		PansearchCheck: pansearchSvc.CheckLinks,
+		// [P0-2] P1 转存：按账号取注入好凭据的驱动实例
+		DriverGet: func(ctx context.Context, accountID int64) (driver.Driver, error) {
+			return core.drivers.Get(ctx, accountID)
+		},
+		// [P0-2] P1 转存：认证状态为 active 的账号列表
+		Accounts: activeAccountsFn(svc.account),
+		// [v7 整改] 配置开关读取
+		MagnetEnabled: configBool(st.store.Configs, domain.ConfigResolveMagnetEnabled, true),
+		DemoFallback:  configBool(st.store.Configs, domain.ConfigResolveDemoFallback, true),
+		P0MinScore:    configFloat(st.store.Configs, domain.ConfigResolveP0MinScore, 0.6),
+		Signer:        signer,
+		Hub:           hub,
+		ServerVersion: xmediaVersion,
 	})
 
 	maxReq := configInt(st.store.Configs, domain.ConfigResolveRateLimitMax, 3)
@@ -85,6 +105,26 @@ func loggedInDriversFn(accountSvc *account.Service) func(ctx context.Context) []
 		for _, v := range views {
 			if v.AuthStatus == domain.AuthActive {
 				out = append(out, driverSourceName(v.Account.DriverType))
+			}
+		}
+		return out
+	}
+}
+
+// activeAccountsFn 返回认证状态为 active 的账号列表（P1 转存候选，§11.1 运行时跳过未登录）。
+func activeAccountsFn(accountSvc *account.Service) func(ctx context.Context) []domain.Account {
+	return func(ctx context.Context) []domain.Account {
+		if accountSvc == nil {
+			return nil
+		}
+		views, err := accountSvc.List(ctx)
+		if err != nil {
+			return nil
+		}
+		out := make([]domain.Account, 0, len(views))
+		for _, v := range views {
+			if v.AuthStatus == domain.AuthActive && v.Account != nil && v.Account.IsActive {
+				out = append(out, *v.Account)
 			}
 		}
 		return out
@@ -141,4 +181,37 @@ func configInt(configs domain.ConfigRepository, key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// configBool 读取布尔配置（接受 true/1/yes/on）。
+func configBool(configs domain.ConfigRepository, key string, def bool) func(context.Context) bool {
+	return func(ctx context.Context) bool {
+		if configs == nil {
+			return def
+		}
+		v, ok, err := configs.Get(ctx, key)
+		if err != nil || !ok || strings.TrimSpace(v) == "" {
+			return def
+		}
+		s := strings.ToLower(strings.TrimSpace(v))
+		return s == "true" || s == "1" || s == "yes" || s == "on"
+	}
+}
+
+// configFloat 读取浮点配置。
+func configFloat(configs domain.ConfigRepository, key string, def float64) func(context.Context) float64 {
+	return func(ctx context.Context) float64 {
+		if configs == nil {
+			return def
+		}
+		v, ok, err := configs.Get(ctx, key)
+		if err != nil || !ok || strings.TrimSpace(v) == "" {
+			return def
+		}
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return def
+		}
+		return f
+	}
 }

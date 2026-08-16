@@ -21,7 +21,7 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	})
 	notifySvc.Register(core.bus)
 
-	xm := wireXMedia(st, svc, logs)
+	xm := wireXMedia(st, svc, core, logs)
 	router := api.NewRouter(api.Deps{
 		Logs:              logs,
 		AccountSvc:        svc.account,

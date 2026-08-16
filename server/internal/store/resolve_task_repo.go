@@ -19,7 +19,7 @@ func scanResolveTask(sc interface{ Scan(...any) error }) (*domain.ResolveTask, e
 	)
 	err := sc.Scan(&t.ID, &t.ExternalID, &t.ExternalSource, &t.MediaType, &t.Title, &t.Year,
 		&t.Season, &t.Episode, &status, &stage, &t.StageDetail, &t.ProgressPct,
-		&t.ResultSource, &t.ResultFileID, &t.ResultAccountID, &t.ResultFilePath, &t.ErrorMsg,
+		&t.ResultSource, &t.ResultFileID, &t.ResultAccountID, &t.ResultFilePath, &t.OfflineTaskID, &t.ErrorMsg,
 		&created, &updated)
 	if err != nil {
 		return nil, err
@@ -33,7 +33,7 @@ func scanResolveTask(sc interface{ Scan(...any) error }) (*domain.ResolveTask, e
 
 const resolveTaskCols = `id, external_id, external_source, media_type, title, year, season, episode,
 	status, stage, stage_detail, progress_pct, result_source, result_file_id, result_account_id,
-	result_file_path, error_msg, created_at, updated_at`
+	result_file_path, offline_task_id, error_msg, created_at, updated_at`
 
 func (r *resolveTaskRepo) Create(ctx context.Context, t *domain.ResolveTask) (int64, error) {
 	res, err := r.db.write.ExecContext(ctx, `
@@ -74,11 +74,12 @@ func (r *resolveTaskRepo) FindActiveByKey(ctx context.Context, externalID int64,
 func (r *resolveTaskRepo) Update(ctx context.Context, t *domain.ResolveTask) error {
 	_, err := r.db.write.ExecContext(ctx, `
 		UPDATE resolve_tasks SET status=?, stage=?, stage_detail=?, progress_pct=?,
-			result_source=?, result_file_id=?, result_account_id=?, result_file_path=?, error_msg=?,
+			result_source=?, result_file_id=?, result_account_id=?, result_file_path=?,
+			offline_task_id=?, error_msg=?,
 			updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`,
 		string(t.Status), string(t.Stage), t.StageDetail, t.ProgressPct,
-		t.ResultSource, t.ResultFileID, t.ResultAccountID, t.ResultFilePath, t.ErrorMsg, t.ID)
+		t.ResultSource, t.ResultFileID, t.ResultAccountID, t.ResultFilePath, t.OfflineTaskID, t.ErrorMsg, t.ID)
 	return wrapDB(err)
 }
 
