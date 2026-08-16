@@ -3,10 +3,8 @@ package api
 import (
 	"net/http"
 
-	"xmedia/internal/cache"
 	"xmedia/internal/settings"
 )
-
 
 func (h *Handler) getSettings(w http.ResponseWriter, _ *http.Request) {
 	if h.settings == nil {
@@ -49,23 +47,8 @@ func (h *Handler) updateSettings(w http.ResponseWriter, r *http.Request) {
 			previousActiveRefresh,
 		)
 	}
-	if _, ok := in[settings.KeyWebDAVCacheEnabled]; ok && h.cache != nil {
-		cache.InvalidateAllWebDAVCaches(h.cache)
-	}
 	if h.onSettingsUpdated != nil {
 		h.onSettingsUpdated(in)
-	}
-	if embySettingsTouched(in) && h.embyProxy != nil {
-		if err := h.embyProxy.Sync(r.Context()); err != nil {
-			writeErr(w, err)
-			return
-		}
-	}
-	if fnosSettingsTouched(in) && h.fnosProxy != nil {
-		if err := h.fnosProxy.Sync(r.Context()); err != nil {
-			writeErr(w, err)
-			return
-		}
 	}
 	h.applyUploadConcurrencyFromSettings(r.Context(), in)
 	writeOK(w, h.settings.Snapshot())

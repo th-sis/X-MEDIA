@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"xmedia/internal/domain"
-	mrules "xmedia/internal/mediaorganize/rules"
+	mrules "xmedia/internal/filenamerules"
 )
 
 type NameAlignPreviewInput struct {

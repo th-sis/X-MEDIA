@@ -19,12 +19,8 @@ const (
 	AutomationTriggerWebhook         = "webhook"
 	AutomationTriggerOfflineDownload = "offline_download"
 
-	AutomationActionOrganize    = "organize"
-	AutomationActionStrm        = "strm"
-	AutomationActionStrmScrape  = "strm_scrape"
-	AutomationActionCacheClear  = "cache_clear"
-	AutomationActionDelay       = "delay"
-	AutomationActionEmbyRefresh = "emby_refresh"
+	// §13.1 裁剪后仅保留 delay 动作（organize/strm/strm_scrape/cache_clear/emby_refresh 已随模块移除）。
+	AutomationActionDelay = "delay"
 
 	AutomationConditionAlways      = "always"
 	AutomationConditionPrevSuccess = "prev_success"

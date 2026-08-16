@@ -15,17 +15,12 @@ import (
 	"xmedia/internal/cacheretention"
 	"xmedia/internal/config"
 	"xmedia/internal/driver"
-	"xmedia/internal/embyproxy"
-	"xmedia/internal/fnosproxy"
 	"xmedia/internal/eventbus"
 	"xmedia/internal/file"
-	"xmedia/internal/fusemount"
 	"xmedia/internal/logx"
-	"xmedia/internal/mediaorganize"
 	"xmedia/internal/playback"
 	"xmedia/internal/settings"
 	"xmedia/internal/store"
-	"xmedia/internal/strm"
 	"xmedia/internal/upload"
 )
 
@@ -45,13 +40,8 @@ type App struct {
 	files          *file.Service
 	uploads        *upload.Manager
 	playback       *playback.Service
-	strm           *strm.Service
-	mediaOrganize  *mediaorganize.Service
 	automation     *automation.Service
-	fuse           *fusemount.Service
 	cacheRetention *cacheretention.Service
-	embyProxy      *embyproxy.Service
-	fnosProxy      *fnosproxy.Service
 	httpSrv        *http.Server
 	httpBaseCancel context.CancelFunc
 }
@@ -91,6 +81,9 @@ func New(ctx context.Context, opts Options) (*App, error) {
 	}
 	svc := wireServices(cfg, logs, stBundle, core)
 
+	// [v7 整改] 启动序第 1.5 步：关键配置验证（不阻塞，失败仅记日志）
+	runStartupValidation(ctx, stBundle)
+
 	httpSrv, err := wireHTTPServer(cfg, logs, stBundle, core, svc)
 	if err != nil {
 		return nil, err
@@ -114,13 +107,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		files:          svc.files,
 		uploads:        svc.uploads,
 		playback:       svc.playback,
-		strm:           svc.strm,
-		mediaOrganize:  svc.mediaOrganize,
 		automation:     svc.automation,
-		fuse:           svc.fuse,
 		cacheRetention: svc.cacheRetention,
-		embyProxy:      svc.embyProxy,
-		fnosProxy:      svc.fnosProxy,
 		httpSrv:        httpSrv,
 		httpBaseCancel: httpBaseCancel,
 	}, nil
@@ -134,26 +122,14 @@ func (a *App) Run(ctx context.Context) error {
 	if a.sched != nil && a.settings != nil {
 		a.sched.InitActiveRefresh(ctx, a.settings.Bool(settings.KeyAuthActiveRefresh))
 	}
-	if a.strm != nil {
-		a.strm.Start(ctx)
-	}
 	if a.cacheRetention != nil {
 		a.cacheRetention.Start(ctx)
 	}
 	if a.automation != nil {
 		a.automation.Start(ctx)
 	}
-	if a.fuse != nil {
-		a.fuse.Start(ctx)
-	}
 	if a.uploads != nil {
 		a.uploads.StartTempCleanup(ctx)
-	}
-	if a.embyProxy != nil {
-		a.embyProxy.Start(ctx)
-	}
-	if a.fnosProxy != nil {
-		a.fnosProxy.Start(ctx)
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -174,11 +150,10 @@ func (a *App) Run(ctx context.Context) error {
 
 const (
 	shutdownHTTPBudget = 8 * time.Second
-	shutdownFuseBudget = 12 * time.Second
 	shutdownBusBudget  = 3 * time.Second
 )
 
-// Shutdown 按依赖反序优雅关闭：先停 HTTP，再卸载 FUSE，最后关 DB。
+// Shutdown 按依赖反序优雅关闭：先停 HTTP，再关事件总线，最后关 DB。
 func (a *App) Shutdown(ctx context.Context) error {
 	a.log.Info("正在优雅关闭各组件")
 	if a.sched != nil {
@@ -190,12 +165,6 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.httpBaseCancel != nil {
 		a.httpBaseCancel()
 	}
-	if a.embyProxy != nil {
-		a.embyProxy.Shutdown(ctx)
-	}
-	if a.fnosProxy != nil {
-		a.fnosProxy.Shutdown(ctx)
-	}
 
 	httpCtx, cancelHTTP := context.WithTimeout(ctx, shutdownHTTPBudget)
 	err := a.httpSrv.Shutdown(httpCtx)
@@ -205,12 +174,6 @@ func (a *App) Shutdown(ctx context.Context) error {
 		if cerr := a.httpSrv.Close(); cerr != nil && !errors.Is(cerr, http.ErrServerClosed) {
 			a.log.Warn("HTTP 服务强制关闭异常", "err", cerr)
 		}
-	}
-
-	if a.fuse != nil {
-		fuseCtx, cancelFuse := context.WithTimeout(ctx, shutdownFuseBudget)
-		a.fuse.Stop(fuseCtx)
-		cancelFuse()
 	}
 
 	busCtx, cancelBus := context.WithTimeout(ctx, shutdownBusBudget)

@@ -12,7 +12,6 @@ import (
 	"xmedia/internal/eventbus"
 	"xmedia/internal/logx"
 	"xmedia/internal/settings"
-	"xmedia/internal/strm"
 	"xmedia/pkg/secretkey"
 )
 
@@ -24,7 +23,6 @@ type coreBundle struct {
 	sched    *auth.Scheduler
 	exec     *driverexec.Executor
 	listHits *cache.HitTracker
-	strm     *strm.Coordinator
 	secret   []byte
 }
 

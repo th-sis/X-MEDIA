@@ -18,30 +18,21 @@ import (
 
 	"xmedia/internal/account"
 	"xmedia/internal/adminauth"
-	"xmedia/internal/apikey"
 	"xmedia/internal/auth"
 	"xmedia/internal/automation"
 	"xmedia/internal/cache"
 	"xmedia/internal/cacheretention"
 	"xmedia/internal/crosstransfer"
 	"xmedia/internal/domain"
-	"xmedia/internal/embyproxy"
-	"xmedia/internal/favorites"
 	"xmedia/internal/file"
-	"xmedia/internal/fnosproxy"
-	"xmedia/internal/fusemount"
 	"xmedia/internal/logx"
 	"xmedia/internal/media"
-	"xmedia/internal/mediaorganize"
 	"xmedia/internal/notification"
 	"xmedia/internal/offlinedownload"
 	"xmedia/internal/pansearch"
 	"xmedia/internal/playback"
 	"xmedia/internal/resolve"
 	"xmedia/internal/settings"
-	"xmedia/internal/share/dav"
-	"xmedia/internal/strm"
-	"xmedia/internal/strmscrape"
 	"xmedia/internal/tmdb"
 	"xmedia/internal/upload"
 	"xmedia/internal/websocket"
@@ -51,6 +42,7 @@ import (
 var webFS embed.FS
 
 // Deps 是 API 层所需依赖（只依赖接口/服务，不感知具体存储实现）。
+// §13.1 裁剪后移除 Strm/MediaOrganize/StrmScrape/Fuse/EmbyProxy/FnosProxy/ApiKeys/Favorites(旧)。
 type Deps struct {
 	Logs              *logx.Manager
 	AccountSvc        *account.Service
@@ -60,20 +52,12 @@ type Deps struct {
 	Cache             *cache.Service
 	ListHitTracker    *cache.HitTracker
 	Files             *file.Service
-	Favorites         *favorites.Service
 	Uploads           *upload.Manager
 	OfflineDownloads  *offlinedownload.Service
 	Playback          *playback.Service
-	Strm              *strm.Service
 	CacheRetention    *cacheretention.Service
-	MediaOrganize     *mediaorganize.Service
-	StrmScrape        *strmscrape.Service
 	Automation        *automation.Service
-	Fuse              *fusemount.Service
 	CrossTransfer     *crosstransfer.Service
-	EmbyProxy         *embyproxy.Service
-	FnosProxy         *fnosproxy.Service
-	ApiKeys           *apikey.Service
 	Auth              *auth.Service
 	AuthSched         *auth.Scheduler
 	AdminAuth         *adminauth.Service
@@ -101,20 +85,12 @@ type Handler struct {
 	cache             *cache.Service
 	listHits          *cache.HitTracker
 	files             *file.Service
-	favorites         *favorites.Service
 	uploads           *upload.Manager
 	offlineDownloads  *offlinedownload.Service
 	playback          *playback.Service
-	strm              *strm.Service
 	cacheRetention    *cacheretention.Service
-	mediaOrganize     *mediaorganize.Service
-	strmScrape        *strmscrape.Service
 	automation        *automation.Service
-	fuse              *fusemount.Service
 	crossTransfer     *crosstransfer.Service
-	embyProxy         *embyproxy.Service
-	fnosProxy         *fnosproxy.Service
-	apiKeys           *apikey.Service
 	auth              *auth.Service
 	authSched         *auth.Scheduler
 	adminAuth         *adminauth.Service
@@ -147,20 +123,12 @@ func NewRouter(d Deps) http.Handler {
 		cache:             d.Cache,
 		listHits:          d.ListHitTracker,
 		files:             d.Files,
-		favorites:         d.Favorites,
 		uploads:           d.Uploads,
 		offlineDownloads:  d.OfflineDownloads,
 		playback:          d.Playback,
-		strm:              d.Strm,
 		cacheRetention:    d.CacheRetention,
-		mediaOrganize:     d.MediaOrganize,
-		strmScrape:        d.StrmScrape,
 		automation:        d.Automation,
-		fuse:              d.Fuse,
 		crossTransfer:     d.CrossTransfer,
-		embyProxy:         d.EmbyProxy,
-		fnosProxy:         d.FnosProxy,
-		apiKeys:           d.ApiKeys,
 		auth:              d.Auth,
 		authSched:         d.AuthSched,
 		adminAuth:         d.AdminAuth,
@@ -219,10 +187,6 @@ func NewRouter(d Deps) http.Handler {
 			r.Post("/check-availability", h.mediaCheckAvailability)
 		})
 
-		r.Get("/strm/play/{account_id}/{file_key}/t/{token}/n/{filename}", h.strmPlay)
-		r.Head("/strm/play/{account_id}/{file_key}/t/{token}/n/{filename}", h.strmPlay)
-		r.Get("/strm/play/{account_id}/{file_key}/t/{token}/n/{filename}/s/{signature}", h.strmPlay)
-		r.Head("/strm/play/{account_id}/{file_key}/t/{token}/n/{filename}/s/{signature}", h.strmPlay)
 		r.Route("/public", func(r chi.Router) {
 			r.Use(h.requirePublicOrAdmin)
 			r.Get("/accounts", h.publicAccounts)
@@ -253,15 +217,6 @@ func NewRouter(d Deps) http.Handler {
 			r.Route("/admin", func(r chi.Router) {
 				r.Get("/system-config", h.adminSystemConfig)
 				r.Post("/update-credentials", h.adminUpdateCredentials)
-				r.Post("/webdav-config", h.adminWebDAVConfig)
-				r.Get("/emby/config", h.getEmbyConfig)
-				r.Put("/emby/config", h.updateEmbyConfig)
-				r.Post("/emby/test", h.testEmbyConfig)
-				r.Get("/emby/libraries", h.listEmbyLibraries)
-				r.Post("/emby/refresh", h.refreshEmbyLibrary)
-				r.Get("/fnos/config", h.getFnosConfig)
-				r.Put("/fnos/config", h.updateFnosConfig)
-				r.Post("/fnos/test", h.testFnosConfig)
 				r.Get("/local-fs/browse", h.browseLocalFS)
 				r.Get("/drivers", h.listDrivers)
 				r.Get("/accounts", h.listAccounts)
@@ -274,14 +229,6 @@ func NewRouter(d Deps) http.Handler {
 				r.Post("/accounts/{id}/refresh-auth", h.refreshAccountAuth)
 				r.Get("/settings", h.getSettings)
 				r.Put("/settings", h.updateSettings)
-				r.Route("/api-keys", func(r chi.Router) {
-					r.Get("/", h.listApiKeys)
-					r.Post("/", h.createApiKey)
-					r.Post("/strm/rotate", h.rotateStrmKey)
-					r.Put("/{id}", h.updateApiKey)
-					r.Post("/{id}/toggle", h.toggleApiKey)
-					r.Delete("/{id}", h.deleteApiKey)
-				})
 				r.Get("/cache/stats", h.cacheStats)
 				r.Get("/cache/stats/{id}", h.accountCacheStats)
 				r.Post("/clear-cache", h.clearCache)
@@ -304,62 +251,6 @@ func NewRouter(d Deps) http.Handler {
 				r.Delete("/notifications", h.deleteAllNotifications)
 				r.Post("/notifications/{id}/read", h.markNotificationRead)
 				r.Delete("/notifications/{id}", h.deleteNotification)
-				r.Route("/strm", func(r chi.Router) {
-					r.Get("/startup", h.strmStartupRemaining)
-					r.Get("/tasks", h.listStrmTasks)
-					r.Post("/tasks", h.createStrmTask)
-					r.Put("/tasks/{id}", h.updateStrmTask)
-					r.Delete("/tasks/{id}", h.deleteStrmTask)
-					r.Post("/tasks/{id}/toggle", h.toggleStrmTask)
-					r.Post("/tasks/{id}/run", h.runStrmTaskNow)
-					r.Post("/tasks/{id}/force-stop", h.forceStopStrmTask)
-					r.Get("/tasks/{id}/branches", h.listStrmBranches)
-					r.Post("/tasks/{id}/branches", h.createStrmBranch)
-					r.Put("/tasks/{id}/branches/{branch_id}", h.updateStrmBranch)
-					r.Delete("/tasks/{id}/branches/{branch_id}", h.deleteStrmBranch)
-					r.Get("/settings", h.getStrmSettings)
-					r.Put("/settings", h.updateStrmSettings)
-					r.Post("/replace-base-url", h.replaceStrmBaseURL)
-					r.Post("/tasks/precheck-account-repair", h.precheckStrmAccountRepair)
-					r.Post("/tasks/repair-account-references", h.repairStrmAccountReferences)
-					r.Post("/generate-current-directory", h.generateCurrentDirectoryStrm)
-					r.Post("/directory-status", h.checkStrmDirectoryStatus)
-				})
-				r.Route("/media-organize", func(r chi.Router) {
-					r.Get("/tasks", h.listMediaOrganizeTasks)
-					r.Post("/tasks", h.createMediaOrganizeTask)
-					r.Put("/tasks/{id}", h.updateMediaOrganizeTask)
-					r.Delete("/tasks/{id}", h.deleteMediaOrganizeTask)
-					r.Post("/tasks/{id}/plan", h.planMediaOrganizeTask)
-					r.Get("/tasks/{id}/plan", h.getMediaOrganizePlan)
-					r.Delete("/tasks/{id}/plan", h.deleteMediaOrganizePlan)
-					r.Put("/tasks/{id}/plan/actions/{action_id}", h.updateMediaOrganizePlanAction)
-					r.Delete("/tasks/{id}/plan/actions/{action_id}", h.deleteMediaOrganizePlanAction)
-					r.Post("/tasks/{id}/plan/actions/batch-delete", h.batchDeleteMediaOrganizePlanActions)
-					r.Post("/tasks/{id}/apply", h.applyMediaOrganizeTask)
-					r.Post("/tasks/{id}/run", h.runMediaOrganizeTask)
-					r.Post("/tasks/{id}/stop", h.stopMediaOrganizeTask)
-					r.Get("/tasks/{id}/logs", h.getMediaOrganizeLogs)
-					r.Get("/tasks/{id}/progress", h.getMediaOrganizeProgress)
-					r.Get("/settings", h.getMediaOrganizeSettings)
-					r.Put("/settings", h.updateMediaOrganizeSettings)
-					r.Get("/guess-file", h.guessMediaOrganizeFile)
-					r.Post("/test-tmdb", h.testMediaOrganizeTMDB)
-					r.Get("/search-tmdb", h.searchMediaOrganizeTMDB)
-				})
-				r.Route("/strm-scrape", func(r chi.Router) {
-					r.Get("/settings", h.getStrmScrapeSettings)
-					r.Put("/settings", h.updateStrmScrapeSettings)
-					r.Post("/run", h.runStrmScrape)
-					r.Post("/stop", h.stopStrmScrape)
-					r.Get("/progress", h.getStrmScrapeProgress)
-					r.Get("/items", h.listStrmScrapeItems)
-					r.Post("/refresh-index", h.refreshStrmScrapeIndex)
-					r.Post("/rematch", h.rematchStrmScrapeItem)
-					r.Post("/rescrape", h.rescrapeStrmScrapeItem)
-					r.Post("/mark-normal", h.markStrmScrapeNormal)
-					r.Get("/poster", h.getStrmScrapePoster)
-				})
 				r.Route("/automation", func(r chi.Router) {
 					r.Get("/rules", h.listAutomationRules)
 					r.Post("/rules", h.createAutomationRule)
@@ -371,19 +262,6 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/runs", h.listAutomationRuns)
 					r.Post("/runs/clear", h.clearAutomationRuns)
 					r.Get("/options", h.automationOptions)
-				})
-				r.Route("/fuse", func(r chi.Router) {
-					r.Get("/status", h.fuseStatus)
-					r.Put("/config", h.updateFuseConfig)
-					r.Get("/read-cache", h.getFuseReadCache)
-					r.Put("/read-cache", h.updateFuseReadCache)
-					r.Post("/read-cache/clear", h.clearFuseReadCache)
-					r.Get("/mounts", h.listFuseMounts)
-					r.Post("/mounts", h.createFuseMount)
-					r.Put("/mounts/{id}", h.updateFuseMount)
-					r.Delete("/mounts/{id}", h.deleteFuseMount)
-					r.Post("/mounts/{id}/mount", h.mountFuse)
-					r.Post("/mounts/{id}/unmount", h.unmountFuse)
 				})
 			})
 			r.Post("/oauth/start", h.startOAuth)
@@ -406,8 +284,6 @@ func NewRouter(d Deps) http.Handler {
 				r.Post("/move", h.moveFiles)
 				r.Post("/copy", h.copyFiles)
 				r.Put("/rename", h.renameFile)
-				r.Get("/favorites", h.getFavorites)
-				r.Put("/favorites", h.saveFavorites)
 				r.Post("/name-align/preview", h.previewNameAlign)
 				r.Post("/name-align/apply", h.applyNameAlign)
 				r.Post("/create-folder", h.createFolder)
@@ -438,40 +314,13 @@ func NewRouter(d Deps) http.Handler {
 	// WebSocket 端点（独立于 /api 前缀）
 	r.Get("/ws", h.wsHandle)
 
-	davLog := apiLog
-	if d.Logs != nil {
-		davLog = d.Logs.For(logx.ModuleWebDAV)
-	}
-	davSrv := dav.New(dav.Deps{
-		Logs:         davLog,
-		Files:        d.Files,
-		Playback:     d.Playback,
-		Accounts:     d.Accounts,
-		Configs:      d.Configs,
-		Cache:        d.Cache,
-		Settings:     d.Settings,
-		DataDir:      d.DataDir,
-		TempRegistry: d.Uploads.TempRegistry(),
-	})
-
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic(err) // 编译期内嵌，理论上不会失败
 	}
 	r.Handle("/*", spaHandler(sub))
 
-	return davBypass(davSrv, r)
-}
-
-// chi 不认 WebDAV 方法，/dav 须在外层旁路
-func davBypass(dav http.Handler, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/dav" || strings.HasPrefix(r.URL.Path, "/dav/") {
-			dav.ServeHTTP(w, r)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return r
 }
 
 func spaHandler(fsys fs.FS) http.Handler {

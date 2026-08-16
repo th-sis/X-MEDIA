@@ -2,21 +2,29 @@ package automation
 
 import (
 	"context"
+	"crypto/subtle"
 	"strings"
 
 	"xmedia/internal/domain"
 )
 
+// ConfigAutomationWebhookToken 是 webhook 回调的共享密钥配置键（§13.1 裁剪：
+// API Key 表随 apikey 模块移除，webhook 鉴权简化为单共享 token）。值为空时拒绝所有回调。
+const ConfigAutomationWebhookToken = "automation_webhook_token"
+
 func (s *Service) TriggerWebhook(ctx context.Context, authHeader string, event WebhookEvent) (map[string]any, error) {
-	if s.apiKeys == nil {
-		return nil, domain.Errf(domain.CodeInternal)
-	}
 	raw, err := bearerToken(authHeader)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.apiKeys.ValidateTask(ctx, raw); err != nil {
-		return nil, err
+	expected := ""
+	if s.configs != nil {
+		if v, ok, err := s.configs.Get(ctx, ConfigAutomationWebhookToken); err == nil && ok {
+			expected = strings.TrimSpace(v)
+		}
+	}
+	if expected == "" || subtle.ConstantTimeCompare([]byte(raw), []byte(expected)) != 1 {
+		return nil, domain.Errorf(domain.CodePermissionDenied, "Webhook Token 无效")
 	}
 	eventName := strings.TrimSpace(event.Event)
 	if eventName == "" {
@@ -77,7 +85,7 @@ func bearerToken(header string) (string, error) {
 	}
 	token := strings.TrimSpace(header[7:])
 	if token == "" {
-		return "", domain.Errorf(domain.CodePermissionDenied, "缺少 API Key")
+		return "", domain.Errorf(domain.CodePermissionDenied, "缺少 Webhook Token")
 	}
 	return token, nil
 }

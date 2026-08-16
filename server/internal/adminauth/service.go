@@ -28,11 +28,9 @@ const (
 	KeyAdminPassword              = "admin_password"
 	KeySessionTimeout             = "session_timeout"
 	KeyPublicIndexEnabled         = "public_index_enabled"
-	KeyWebDAVEnabled              = "webdav_enabled"
 	KeyIndexAccountSwitchMode     = "index_account_switch_mode"
 	KeyAdminHomeReturnMode        = "admin_home_return_mode"
 	KeyHeaderEffectsEnabled       = "header_effects_enabled"
-	KeyIndexStrmAutoDetectEnabled = "index_strm_auto_detect_enabled"
 	KeyAdminTempPasswordHash      = "admin_temp_password_hash"
 	KeyAdminTempPasswordExpiresAt = "admin_temp_password_expires_at"
 	KeyAdminTempPasswordLastReset = "admin_temp_password_last_reset_at"
@@ -41,7 +39,6 @@ const (
 var passwordChangeExemptPaths = map[string]struct{}{
 	"/api/admin/system-config":      {},
 	"/api/admin/update-credentials": {},
-	"/api/admin/webdav-config":      {},
 }
 
 type Session struct {
@@ -69,39 +66,32 @@ type LoginResult struct {
 }
 
 type SystemConfig struct {
-	AdminUsername              string  `json:"admin_username"`
-	SessionTimeout             float64 `json:"session_timeout"`
-	PublicIndexEnabled         bool    `json:"public_index_enabled"`
-	IndexAccountSwitchMode     string  `json:"index_account_switch_mode"`
-	AdminHomeReturnMode        string  `json:"admin_home_return_mode"`
-	HeaderEffectsEnabled       bool    `json:"header_effects_enabled"`
-	IndexStrmAutoDetectEnabled bool    `json:"index_strm_auto_detect_enabled"`
-	MustChangePassword         bool    `json:"must_change_password"`
-	PasswordChangeReason       string  `json:"password_change_reason"`
-	OAuthServerURL             string  `json:"oauth_server_url,omitempty"`
-	UploadTaskConcurrency      int     `json:"upload_task_concurrency,omitempty"`
-	LogRetentionDays           int     `json:"log_retention_days,omitempty"`
-	AuthActiveRefreshEnabled   bool    `json:"auth_active_refresh_enabled,omitempty"`
-	WebDAVEnabled              bool    `json:"webdav_enabled"`
-}
-
-type WebDAVConfigRequest struct {
-	WebDAVEnabled *bool `json:"webdav_enabled"`
+	AdminUsername            string  `json:"admin_username"`
+	SessionTimeout           float64 `json:"session_timeout"`
+	PublicIndexEnabled       bool    `json:"public_index_enabled"`
+	IndexAccountSwitchMode   string  `json:"index_account_switch_mode"`
+	AdminHomeReturnMode      string  `json:"admin_home_return_mode"`
+	HeaderEffectsEnabled     bool    `json:"header_effects_enabled"`
+	MustChangePassword       bool    `json:"must_change_password"`
+	PasswordChangeReason     string  `json:"password_change_reason"`
+	OAuthServerURL           string  `json:"oauth_server_url,omitempty"`
+	UploadTaskConcurrency    int     `json:"upload_task_concurrency,omitempty"`
+	LogRetentionDays         int     `json:"log_retention_days,omitempty"`
+	AuthActiveRefreshEnabled bool    `json:"auth_active_refresh_enabled,omitempty"`
 }
 
 type UpdateCredentialsRequest struct {
-	AdminUsername              string   `json:"admin_username"`
-	AdminPassword              string   `json:"admin_password"`
-	SessionTimeout             *float64 `json:"session_timeout"`
-	PublicIndexEnabled         *bool    `json:"public_index_enabled"`
-	IndexAccountSwitchMode     *string  `json:"index_account_switch_mode"`
-	AdminHomeReturnMode        *string  `json:"admin_home_return_mode"`
-	HeaderEffectsEnabled       *bool    `json:"header_effects_enabled"`
-	IndexStrmAutoDetectEnabled *bool    `json:"index_strm_auto_detect_enabled"`
-	OAuthServerURL             string   `json:"oauth_server_url"`
-	UploadTaskConcurrency      *int     `json:"upload_task_concurrency"`
-	LogRetentionDays           *int     `json:"log_retention_days"`
-	AuthActiveRefreshEnabled   *bool    `json:"auth_active_refresh_enabled"`
+	AdminUsername            string   `json:"admin_username"`
+	AdminPassword            string   `json:"admin_password"`
+	SessionTimeout           *float64 `json:"session_timeout"`
+	PublicIndexEnabled       *bool    `json:"public_index_enabled"`
+	IndexAccountSwitchMode   *string  `json:"index_account_switch_mode"`
+	AdminHomeReturnMode      *string  `json:"admin_home_return_mode"`
+	HeaderEffectsEnabled     *bool    `json:"header_effects_enabled"`
+	OAuthServerURL           string   `json:"oauth_server_url"`
+	UploadTaskConcurrency    *int     `json:"upload_task_concurrency"`
+	LogRetentionDays         *int     `json:"log_retention_days"`
+	AuthActiveRefreshEnabled *bool    `json:"auth_active_refresh_enabled"`
 }
 
 type Service struct {
@@ -343,20 +333,18 @@ func (s *Service) SystemConfig(ctx context.Context) SystemConfig {
 	username, password := s.adminCredentials(ctx)
 	state := security.AssessAdminCredentialState(username, password)
 	return SystemConfig{
-		AdminUsername:              username,
-		SessionTimeout:             float64(s.sessionTimeout(ctx)) / 3600,
-		PublicIndexEnabled:         s.publicIndexEnabled(ctx),
-		IndexAccountSwitchMode:     s.indexAccountSwitchMode(ctx),
-		AdminHomeReturnMode:        s.adminHomeReturnMode(ctx),
-		HeaderEffectsEnabled:       s.headerEffectsEnabled(ctx),
-		IndexStrmAutoDetectEnabled: s.indexStrmAutoDetectEnabled(ctx),
-		MustChangePassword:         state.MustChangePassword,
-		PasswordChangeReason:       state.PasswordChangeReason,
-		OAuthServerURL:             s.configString(ctx, domain.SettingOAuthServerURL, domain.DefaultOAuthServerURL),
-		UploadTaskConcurrency:      s.configInt(ctx, "upload_task_concurrency", 3),
-		LogRetentionDays:           s.configInt(ctx, "log_retention_days", 30),
-		AuthActiveRefreshEnabled:   s.configBool(ctx, "auth_active_refresh_enabled", true),
-		WebDAVEnabled:              s.webdavEnabled(ctx),
+		AdminUsername:            username,
+		SessionTimeout:           float64(s.sessionTimeout(ctx)) / 3600,
+		PublicIndexEnabled:       s.publicIndexEnabled(ctx),
+		IndexAccountSwitchMode:   s.indexAccountSwitchMode(ctx),
+		AdminHomeReturnMode:      s.adminHomeReturnMode(ctx),
+		HeaderEffectsEnabled:     s.headerEffectsEnabled(ctx),
+		MustChangePassword:       state.MustChangePassword,
+		PasswordChangeReason:     state.PasswordChangeReason,
+		OAuthServerURL:           s.configString(ctx, domain.SettingOAuthServerURL, domain.DefaultOAuthServerURL),
+		UploadTaskConcurrency:    s.configInt(ctx, "upload_task_concurrency", 3),
+		LogRetentionDays:         s.configInt(ctx, "log_retention_days", 30),
+		AuthActiveRefreshEnabled: s.configBool(ctx, "auth_active_refresh_enabled", true),
 	}
 }
 
@@ -366,17 +354,6 @@ func (s *Service) IndexAccountSwitchMode(ctx context.Context) string {
 
 func (s *Service) HeaderEffectsEnabled(ctx context.Context) bool {
 	return s.headerEffectsEnabled(ctx)
-}
-
-func (s *Service) IndexStrmAutoDetectEnabled(ctx context.Context) bool {
-	return s.indexStrmAutoDetectEnabled(ctx)
-}
-
-func (s *Service) UpdateWebDAVConfig(ctx context.Context, req WebDAVConfigRequest) error {
-	if req.WebDAVEnabled != nil {
-		_ = s.configs.Set(ctx, KeyWebDAVEnabled, boolString(*req.WebDAVEnabled))
-	}
-	return nil
 }
 
 type configUpdate struct {
@@ -448,9 +425,6 @@ func (s *Service) prepareCredentialUpdates(ctx context.Context, req UpdateCreden
 	if req.HeaderEffectsEnabled != nil {
 		updates = append(updates, configUpdate{key: KeyHeaderEffectsEnabled, value: boolString(*req.HeaderEffectsEnabled)})
 	}
-	if req.IndexStrmAutoDetectEnabled != nil {
-		updates = append(updates, configUpdate{key: KeyIndexStrmAutoDetectEnabled, value: boolString(*req.IndexStrmAutoDetectEnabled)})
-	}
 	if strings.TrimSpace(req.OAuthServerURL) != "" {
 		url := strings.TrimSuffix(strings.TrimSpace(req.OAuthServerURL), "/")
 		if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
@@ -521,16 +495,8 @@ func (s *Service) publicIndexEnabled(ctx context.Context) bool {
 	return s.configBool(ctx, KeyPublicIndexEnabled, true)
 }
 
-func (s *Service) webdavEnabled(ctx context.Context) bool {
-	return s.configBool(ctx, KeyWebDAVEnabled, true)
-}
-
 func (s *Service) headerEffectsEnabled(ctx context.Context) bool {
 	return s.configBool(ctx, KeyHeaderEffectsEnabled, true)
-}
-
-func (s *Service) indexStrmAutoDetectEnabled(ctx context.Context) bool {
-	return s.configBool(ctx, KeyIndexStrmAutoDetectEnabled, true)
 }
 
 func (s *Service) indexAccountSwitchMode(ctx context.Context) string {

@@ -6,7 +6,6 @@ import (
 
 	"xmedia/internal/adminauth"
 	"xmedia/internal/api"
-	"xmedia/internal/apikey"
 	"xmedia/internal/cache"
 	"xmedia/internal/config"
 	"xmedia/internal/logx"
@@ -22,16 +21,6 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	})
 	notifySvc.Register(core.bus)
 
-	apiKeySvc := apikey.New(apikey.Options{
-		Repo:     st.store.ApiKeys,
-		Settings: st.settings,
-		Strm:     svc.strm,
-		StrmDir:  cfg.StrmDir,
-		Secret:   core.secret,
-	})
-	if svc.automation != nil {
-		svc.automation.SetApiKeys(apiKeySvc)
-	}
 	xm := wireXMedia(st, svc, logs)
 	router := api.NewRouter(api.Deps{
 		Logs:              logs,
@@ -42,20 +31,12 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		Cache:             core.cache,
 		ListHitTracker:    core.listHits,
 		Files:             svc.files,
-		Favorites:         svc.favorites,
 		Uploads:           svc.uploads,
 		OfflineDownloads:  svc.offlineDownloads,
 		Playback:          svc.playback,
-		Strm:              svc.strm,
 		CacheRetention:    svc.cacheRetention,
-		MediaOrganize:     svc.mediaOrganize,
-		StrmScrape:        svc.strmScrape,
 		Automation:        svc.automation,
-		Fuse:              svc.fuse,
 		CrossTransfer:     svc.crossTransfer,
-		EmbyProxy:         svc.embyProxy,
-		FnosProxy:         svc.fnosProxy,
-		ApiKeys:           apiKeySvc,
 		Auth:              core.auth,
 		AuthSched:         core.sched,
 		AdminAuth:         adminauth.New(st.store.Configs, core.secret, logs.For(logx.ModuleAPI)),
