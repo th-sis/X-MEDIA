@@ -90,9 +90,16 @@ const nasAvailable = computed(() => !!xMediaSnapshot.value?.nas_available);
 const nasIndexComplete = computed(() => !!xMediaSnapshot.value?.nas_index_complete);
 const loggedInDrivers = computed(() => xMediaSnapshot.value?.logged_in_drivers ?? []);
 
+// V7 §27.1：优先用 capabilities 实时状态（启动快照可能过时），health validation 仅作降级消息源。
 const tmdbStatus = computed(() => xMediaHealth.value?.validation?.tmdb_key?.status ?? "unknown");
-const pansearchStatus = computed(() => xMediaHealth.value?.validation?.pansearch_url?.status ?? "unknown");
-const accountStatus = computed(() => xMediaHealth.value?.validation?.has_any_account?.status ?? "unknown");
+const pansearchStatus = computed(() => {
+  if (xMediaSnapshot.value?.capabilities?.pansearch_available) return "ok";
+  return xMediaHealth.value?.validation?.pansearch_url?.status ?? "unknown";
+});
+const accountStatus = computed(() => {
+  if (loggedInDrivers.value.length > 0) return "ok";
+  return xMediaHealth.value?.validation?.has_any_account?.status ?? "unknown";
+});
 
 const tmdbOk = computed(() => tmdbStatus.value === "ok");
 const pansearchOk = computed(() => pansearchStatus.value === "ok");
