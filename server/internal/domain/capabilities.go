@@ -1,8 +1,10 @@
 package domain
 
 // Capabilities 能力预检结果。
+// [V7 §9.4 + §27.4] nas_status 三态：ok / not_configured / not_accessible
 type Capabilities struct {
-	NASAvailable       bool     `json:"nas_available"`
+	NASAvailable       bool     `json:"nas_available"` // 是否可访问（路径存在 + 启用）
+	NASStatus          string   `json:"nas_status"`    // V7 §27.4 三态
 	NASIndexComplete   bool     `json:"nas_index_complete"`
 	NASIndexCount      int      `json:"nas_index_count"`
 	PansearchAvailable bool     `json:"pansearch_available"`
@@ -10,6 +12,7 @@ type Capabilities struct {
 	NASPhase           string   `json:"nas_phase"`
 	NASProcessedFiles  int      `json:"nas_processed_files"`
 	NASTotalFiles      int      `json:"nas_total_files"`
+	NASScanning        bool     `json:"nas_scanning"`
 	// [v7 整改] P2 磁力下载是否启用
 	MagnetEnabled bool    `json:"magnet_enabled"`
 	P0MinScore    float64 `json:"p0_min_score"`

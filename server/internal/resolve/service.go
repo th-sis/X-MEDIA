@@ -23,6 +23,14 @@ type Service struct {
 	nasConfigured   func(ctx context.Context) bool
 	// [v7 整改] P0 智能跳过：检测索引是否为空
 	indexCountFn func(ctx context.Context) (int, error)
+	// [v7 §6.3] P0 智能跳过：检测是否扫描中（避免扫描中 P0 查询 miss）
+	indexScanningFn func() bool
+	// [V7 §9.7] 索引引擎真实状态（Capabilities 三态化用）：scanning/phase/processed/total
+	indexStatusFn func() (scanning bool, phase string, processed, total int)
+	// [V7 §9.4] NAS 路径已知列表（Capabilities not_accessible 检测用）
+	nasPathsKnown func() []string
+	// [V7 §9.4] NAS 单个路径 stat 检测（Capabilities 三态化用，nil 时兜底视作不可访问）
+	pathStatFn func(path string) bool
 	// [P0-2] P1 盘搜：调用 PanSou 搜索 share 链接
 	pansearchSearch func(ctx context.Context, req pansearch.SearchRequest) ([]domain.PanSearchResult, error)
 	// [P0-2] P1 盘搜：批量链接有效性检测（§8.4）
@@ -51,6 +59,14 @@ type Options struct {
 	LoggedInDrivers func(ctx context.Context) []string
 	NASConfigured   func(ctx context.Context) bool
 	IndexCount      func(ctx context.Context) (int, error)
+	// [V7 §6.3] P0 智能跳过：检测是否扫描中
+	IndexScanning func() bool
+	// [V7 §9.7] 索引引擎状态：scanning/phase/processed/total
+	IndexStatus func() (scanning bool, phase string, processed, total int)
+	// [V7 §9.4] NAS 路径列表（Capabilities 三态化用）
+	NASPathsKnown func() []string
+	// [V7 §9.4] NAS 路径 stat 检测
+	PathStat        func(path string) bool
 	PansearchSearch func(ctx context.Context, req pansearch.SearchRequest) ([]domain.PanSearchResult, error)
 	PansearchCheck  func(ctx context.Context, items []pansearch.CheckItem) ([]pansearch.CheckResult, error)
 	DriverGet       func(ctx context.Context, accountID int64) (driver.Driver, error)
@@ -75,6 +91,18 @@ func NewService(opts Options) *Service {
 	}
 	if opts.IndexCount == nil {
 		opts.IndexCount = func(context.Context) (int, error) { return 0, nil }
+	}
+	if opts.IndexScanning == nil {
+		opts.IndexScanning = func() bool { return false }
+	}
+	if opts.IndexStatus == nil {
+		opts.IndexStatus = func() (bool, string, int, int) { return false, "", 0, 0 }
+	}
+	if opts.NASPathsKnown == nil {
+		opts.NASPathsKnown = func() []string { return nil }
+	}
+	if opts.PathStat == nil {
+		opts.PathStat = func(string) bool { return false }
 	}
 	if opts.PansearchSearch == nil {
 		opts.PansearchSearch = func(context.Context, pansearch.SearchRequest) ([]domain.PanSearchResult, error) {
@@ -308,8 +336,39 @@ func (s *Service) Result(ctx context.Context, taskID int64) (*domain.ResolveTask
 
 // Capabilities 计算能力预检结果。
 func (s *Service) Capabilities(ctx context.Context) domain.Capabilities {
+	// [V7 §9.4 + §27.4] NAS 三态：
+	//   not_configured: 未配置路径或 nas_enabled=false
+	//   not_accessible: 配置了路径但路径不存在或无读权限
+	//   ok:             配置 + 路径可读
+	nasStatus := "not_configured"
+	nasAvailable := false
+	if s.nasConfigured(ctx) {
+		// 路径已配置；进一步检查可达性
+		paths := s.nasPathsKnown()
+		if len(paths) == 0 {
+			nasStatus = "not_configured"
+		} else {
+			// 任一路径存在即可读即视为可访问
+			accessible := false
+			for _, p := range paths {
+				if s.pathAccessible(p) {
+					accessible = true
+					break
+				}
+			}
+			if accessible {
+				nasStatus = "ok"
+				nasAvailable = true
+			} else {
+				nasStatus = "not_accessible"
+			}
+		}
+	}
+
+	// 索引完整/计数：取 indexStatus 真实状态
 	indexComplete := false
 	cnt := 0
+	scanning, phase, processed, total := s.indexStatusFn()
 	if s.mediaIndex != nil {
 		if n, err := s.mediaIndex.Count(ctx); err == nil && n > 0 {
 			indexComplete = true
@@ -317,19 +376,34 @@ func (s *Service) Capabilities(ctx context.Context) domain.Capabilities {
 		}
 	}
 	return domain.Capabilities{
-		NASAvailable:       s.nasConfigured(ctx),
+		NASAvailable:       nasAvailable,
+		NASStatus:          nasStatus,
 		NASIndexComplete:   indexComplete,
 		NASIndexCount:      cnt,
 		PansearchAvailable: s.pansearchHealth(ctx),
 		LoggedInDrivers:    s.loggedInDrivers(ctx),
-		NASPhase:           "",
-		NASProcessedFiles:  0,
-		NASTotalFiles:      0,
+		NASPhase:           phase,
+		NASProcessedFiles:  processed,
+		NASTotalFiles:      total,
 		MagnetEnabled:      s.magnetEnabledFn(ctx),
 		P0MinScore:         s.p0MinScoreFn(ctx),
 		DemoFallback:       s.demoFallbackFn(ctx),
 		ServerVersion:      s.serverVersion,
+		NASScanning:        scanning, // 暴露扫描状态供前端/audit
 	}
+}
+
+// pathAccessible 检查单个 NAS 路径是否可读（V7 §9.4 + §27.4 not_accessible 检测）。
+// 实现：调用 indexengine 的 IsScanning + 路径存在 + 至少存在一个 file。
+// 实际 stat 在 Capabilities 调用时不该阻塞，所以只检查路径存在性。
+func (s *Service) pathAccessible(path string) bool {
+	// 通过 indexengine 的 NASPaths 函数判断路径是否存在：
+	// indexStatusFn 提供的 scanning 状态为 true 即路径在用（视为可达）
+	// 但更准确的判断：直接 stat 路径。stat 失败立刻返回 false（不阻塞）
+	if s.pathStatFn != nil {
+		return s.pathStatFn(path)
+	}
+	return false // 兜底：未注册 stat 函数时视作不可访问
 }
 
 // ticketClaimsFor 构造播放票据载荷。

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"os"
 	"strconv"
 	"strings"
 
@@ -57,6 +58,15 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 	streamProxy := playback.NewStreamProxy(signer, svc.playback, st.store.Configs)
 	hub := websocket.NewHub()
 
+	// [P0-3] 索引引擎（§9）—— 提前声明以便 resolveSvc 使用其状态回调
+	indexEngine := indexengine.NewService(indexengine.Options{
+		MediaIndex:   st.store.MediaIndex,
+		MediaLibrary: st.store.MediaLibrary,
+		Configs:      st.store.Configs,
+		Hub:          hub,
+		WorkerCount:  8,
+	})
+
 	resolveSvc := resolve.NewService(resolve.Options{
 		Tasks:           st.store.ResolveTasks,
 		MediaIndex:      st.store.MediaIndex,
@@ -69,6 +79,24 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		// [v7 整改] 智能跳过 P0：查询索引条数
 		IndexCount: func(ctx context.Context) (int, error) {
 			return st.store.MediaIndex.Count(ctx)
+		},
+		// [V7 §6.3] 智能跳过 P0：检测是否扫描中（避免扫描中 P0 查询 miss）
+		IndexScanning: func() bool {
+			return indexEngine.IsScanning()
+		},
+		// [V7 §9.7] 索引引擎状态：scanning/phase/processed/total
+		IndexStatus: func() (scanning bool, phase string, processed, total int) {
+			p := indexEngine.Progress()
+			return indexEngine.IsScanning(), p.Phase, p.Processed, p.Total
+		},
+		// [V7 §9.4] NAS 路径列表（Capabilities 三态化用）
+		NASPathsKnown: func() []string {
+			return indexEngine.NASPaths(context.Background())
+		},
+		// [V7 §9.4] NAS 路径 stat 检测（Capabilities not_accessible 检测）
+		PathStat: func(path string) bool {
+			info, err := os.Stat(path)
+			return err == nil && info.IsDir()
 		},
 		// [v7 整改] P2 磁力兜底：PanSou 搜索 magnet/ed2k
 		PansearchSearch: pansearchSvc.Search,
@@ -93,14 +121,17 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 	winSec := configInt(st.store.Configs, domain.ConfigResolveRateLimitSec, 30)
 	rateLimiter := resolve.NewRateLimiter(st.store.RateLimits, maxReq, winSec)
 
-	// [P0-3] 索引引擎（§9）
-	indexEngine := indexengine.NewService(indexengine.Options{
-		MediaIndex:   st.store.MediaIndex,
-		MediaLibrary: st.store.MediaLibrary,
-		Configs:      st.store.Configs,
-		Hub:          hub,
-		WorkerCount:  8,
-	})
+	// [V7 §28.1 步骤5] 启动后异步触发 NAS 首次全量扫描
+	// 仅当 NAS 已配置且启用时才启动；扫描中重复触发被忽略。
+	go func() {
+		ctx := context.Background()
+		if !nasConfiguredFn(st.store.Configs)(ctx) {
+			return
+		}
+		if err := indexEngine.ScanNASFull(ctx); err != nil {
+			logs.Root().Warn("NAS first scan skipped", "err", err)
+		}
+	}()
 
 	// [A3] §20 订阅自动搜寻器（复用 resolve 的 P1 轻量探测）
 	subSearcher := resolve.NewSubscriptionSearcher(resolve.SubscriptionSearcherOptions{
@@ -114,8 +145,8 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 	// eventbus.ConfigChanged，Hub 监听后通过 WS 推 capabilities_changed 消息。
 	eventbus.Subscribe(core.bus, func(_ context.Context, evt eventbus.ConfigChanged) {
 		hub.Broadcast("config_changed", map[string]any{
-			"key":           evt.Key,
-			"capabilities":  resolveSvc.Capabilities(context.Background()),
+			"key":          evt.Key,
+			"capabilities": resolveSvc.Capabilities(context.Background()),
 		})
 	})
 
