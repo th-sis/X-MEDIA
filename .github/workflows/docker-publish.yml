@@ -66,23 +66,25 @@ jobs:
         id: meta
         run: |
           # tags: latest + commit SHA + version + 手动输入（如有）
+          # docker/build-push-action@v6 的 tags 参数接受多行 YAML list：
+          #   tags: |
+          #     name:tag1
+          #     name:tag2
           SHA_TAG="sha-${GITHUB_SHA::7}"
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            INPUT_TAG="${{ github.event.inputs.tag }}"
-          else
-            INPUT_TAG=""
-          fi
-          TAGS="--tag ${REGISTRY}/${IMAGE_NAME}:${VERSION}"
-          TAGS="${TAGS} --tag ${REGISTRY}/${IMAGE_NAME}:${SHA_TAG}"
-          if [ -n "${INPUT_TAG}" ]; then
-            TAGS="${TAGS} --tag ${REGISTRY}/${IMAGE_NAME}:${INPUT_TAG}"
-          fi
-          # main 分支自动加 latest
-          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            TAGS="${TAGS} --tag ${REGISTRY}/${IMAGE_NAME}:latest"
-          fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+            echo "${REGISTRY}/${IMAGE_NAME}:${SHA_TAG}"
+            if [ -n "${{ github.event.inputs.tag }}" ]; then
+              echo "${REGISTRY}/${IMAGE_NAME}:${{ github.event.inputs.tag }}"
+            fi
+            # main 分支自动加 latest
+            if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              echo "${REGISTRY}/${IMAGE_NAME}:latest"
+            fi
+            echo "EOF"
+            echo "version=${VERSION}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v6
