@@ -139,6 +139,15 @@ func mapDiskType(t string) string {
 	}
 }
 
+// Invalidate 清空指定关键词的缓存（[v7 整改] §8.5 缓存失效钩子）。
+// 触发时机：账号新增/转存成功/索引刷新。
+func (s *Service) Invalidate(ctx context.Context, keyword string) error {
+	if s.cacheRepo == nil || strings.TrimSpace(keyword) == "" {
+		return nil
+	}
+	return s.cacheRepo.Delete(ctx, keyword)
+}
+
 func detectQuality(note string) string {
 	up := strings.ToUpper(note)
 	switch {

@@ -58,6 +58,9 @@ func (d demoItem) toSummary() MediaSummary {
 		VoteAvg:        d.VoteAvg,
 		Overview:       d.Overview,
 		Genres:         d.Genres,
+		// [v7 整改] 演示数据加 picsum 占位图，不再让客户端只能渲染胶片图标
+		PosterURL:   demoPosterURL(d.ExternalID),
+		BackdropURL: demoBackdropURL(d.ExternalID),
 	}
 }
 

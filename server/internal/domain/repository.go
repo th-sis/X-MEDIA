@@ -101,6 +101,7 @@ type PansearchCacheRepository interface {
 	Get(ctx context.Context, keyword, cloudTypes string) (results string, linkCount int, cachedAt *time.Time, err error)
 	Set(ctx context.Context, keyword, cloudTypes, results string, linkCount int) error
 	MarkStale(ctx context.Context, keyword, cloudTypes string) error
+	Delete(ctx context.Context, keyword string) error
 }
 
 type ResolveTaskRepository interface {

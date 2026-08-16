@@ -1,5 +1,7 @@
 package tmdb
 
+import "strconv"
+
 // demoItem 演示目录条目（无 TMDB Key 时兜底，保证开箱即测）。
 type demoItem struct {
 	ExternalID  int64
@@ -14,6 +16,17 @@ type demoItem struct {
 	Runtime     int
 	Seasons     int
 	EpisodeCnt  int
+}
+
+// demoPosterURL 生成 picsum 占位海报（[v7 整改] 演示数据不再空 URL）。
+// 用 external_id 作为 seed 保证同一影片每次拿到相同图片。
+func demoPosterURL(externalID int64) string {
+	return "https://picsum.photos/seed/xmedia-" + strconv.FormatInt(externalID, 10) + "/300/450"
+}
+
+// demoBackdropURL 生成 picsum 占位背景图。
+func demoBackdropURL(externalID int64) string {
+	return "https://picsum.photos/seed/xmedia-bg-" + strconv.FormatInt(externalID, 10) + "/1280/720"
 }
 
 // demoCatalog 演示元数据目录。海报 URL 留空，由客户端渲染渐变占位海报。

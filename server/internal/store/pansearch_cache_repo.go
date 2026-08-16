@@ -44,3 +44,9 @@ func (r *pansearchCacheRepo) MarkStale(ctx context.Context, keyword, cloudTypes 
 		keyword, cloudTypes)
 	return wrapDB(err)
 }
+
+func (r *pansearchCacheRepo) Delete(ctx context.Context, keyword string) error {
+	_, err := r.db.write.ExecContext(ctx,
+		`DELETE FROM pansearch_cache WHERE keyword=?`, keyword)
+	return wrapDB(err)
+}
