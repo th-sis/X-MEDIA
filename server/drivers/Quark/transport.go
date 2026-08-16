@@ -42,7 +42,12 @@ const (
 	proxyConcurrency      = 3
 )
 
-func (d *Driver) apiBase() string { return baseURL }
+func (d *Driver) apiBase() string {
+	if strings.TrimSpace(d.baseURLOverride) != "" {
+		return strings.TrimSpace(d.baseURLOverride)
+	}
+	return baseURL
+}
 
 func (d *Driver) rootID() string {
 	if id := strings.TrimSpace(d.add.RootFolderID); id != "" {

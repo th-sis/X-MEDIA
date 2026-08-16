@@ -22,6 +22,9 @@ type Driver struct {
 	intervalGate driver.RequestIntervalGate
 	persist      driver.AuthPersistFunc
 
+	// baseURLOverride 测试注入点：覆盖 apiBase（生产始终为空）。
+	baseURLOverride string
+
 	mu                sync.Mutex
 	cookie            string
 	lastCookieChanged bool
