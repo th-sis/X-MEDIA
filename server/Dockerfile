@@ -46,11 +46,11 @@ COPY --from=build /out/xmedia /app/xmedia
 
 ENV XMEDIA_DATA_DIR=/app/data \
     XMEDIA_STRM_DIR=/app/strm \
-    XMEDIA_LISTEN=:8080 \
+    XMEDIA_LISTEN=:38088 \
     XMEDIA_LOG_LEVEL=info \
     TZ=Asia/Shanghai
 
-EXPOSE 8080
+EXPOSE 38088
 
 VOLUME ["/app/data", "/app/strm", "/app/mounts"]
 
