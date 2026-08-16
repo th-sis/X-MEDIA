@@ -40,18 +40,17 @@ RUN apt-get update \
 
 WORKDIR /app
 
-RUN mkdir -p /app/data/log /app/strm /app/mounts
+RUN mkdir -p /app/data/log /app/mounts
 
 COPY --from=build /out/xmedia /app/xmedia
 
 ENV XMEDIA_DATA_DIR=/app/data \
-    XMEDIA_STRM_DIR=/app/strm \
     XMEDIA_LISTEN=:38088 \
     XMEDIA_LOG_LEVEL=info \
     TZ=Asia/Shanghai
 
 EXPOSE 38088
 
-VOLUME ["/app/data", "/app/strm", "/app/mounts"]
+VOLUME ["/app/data", "/app/mounts"]
 
 ENTRYPOINT ["/app/xmedia"]

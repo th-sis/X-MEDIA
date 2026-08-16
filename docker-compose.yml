@@ -77,7 +77,6 @@ services:
         condition: service_healthy
     volumes:
       - ./server/data:/app/data
-      - ./server/strm:/app/strm
       # 设计文档 §8.6：NAS 媒体库只读挂载。
       # ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}：本地无 NAS 时用占位目录避免启动失败
       - ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}:/media/nas:ro
