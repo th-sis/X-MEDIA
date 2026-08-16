@@ -14,7 +14,13 @@ const (
 	ConfigPansearch4KPriority  = "pansearch_4k_priority"
 	// [v7 §8.5] 网盘优先级列表（逗号分隔）：搜索结果按此顺序排序；未列出 source 沉底。
 	ConfigPansearchPriority = "pansearch_priority"
-	ConfigNASLocalPath         = "nas_local_path"
+	ConfigNASLocalPath      = "nas_local_path"
+	// [V7 §9.7] NAS 多媒体源：JSON 数组字符串，存容器内子路径列表。
+	// 示例：`["/mnt/nas-root/Asia-Movie","/mnt/nas-root/Western-Movie"]`
+	// 由 admin 后台动态增删；扫描时遍历每条路径独立 Phase A/B，结果合并。
+	ConfigNASLocalPaths = "nas_local_paths"
+	// [V7 §9.7] NAS 父目录（容器内）：展示用，便于"浏览子目录"辅助选择路径。
+	ConfigNASRootPath          = "nas_root_path"
 	ConfigNASFullScanDay       = "nas_index_full_scan_day"
 	ConfigNASIncrementalDay    = "nas_index_incremental_day"
 	ConfigWebSocketEnabled     = "websocket_enabled"

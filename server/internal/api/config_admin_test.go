@@ -6,8 +6,8 @@ import "testing"
 // 应当被允许；其他 pan_* 随机键应当被拒绝。
 func TestAllowedConfigKey_PrefixAccept(t *testing.T) {
 	cases := []struct {
-		key   string
-		want  bool
+		key  string
+		want bool
 	}{
 		// §6.9 前缀键 → 应通过
 		{"pan_save_root_1", true},
@@ -19,6 +19,10 @@ func TestAllowedConfigKey_PrefixAccept(t *testing.T) {
 		{"tmdb_api_key", true},
 		{"pan_rename_enabled", true},
 		{"resolve_priority", true},
+		// [V7 §9.7] NAS 多媒体源键
+		{"nas_local_path", true},
+		{"nas_local_paths", true},
+		{"nas_root_path", true},
 		// 越界键
 		{"pan_unknown_foo", false},
 		{"save_root_1", false},

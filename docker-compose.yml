@@ -14,8 +14,15 @@
 #     https://github.com/th-sis/X-MEDIA/actions/workflows/docker-publish.yml
 #   - pansou CHANNELS/ENABLED_PLUGINS 必须设置，否则搜不到任何资源
 #   - pansou 端口按设计文档 §8.6 不暴露到宿主机（仅 xmedia-net 内部可达）
-#   - NAS 媒体库路径由 NAS_MEDIA_PATH 环境变量注入，本地不设置时使用占位目录
-#     部署时: export NAS_MEDIA_PATH=/mnt/nas/media 后再 docker compose up
+#   - NAS 共享父目录由 NAS_MEDIA_PATH 环境变量注入（部署时）：
+#       export NAS_MEDIA_PATH=/mnt/BTORAGE   # TrueNAS 主机上 SMB 共享的父目录
+#     容器内挂载到固定路径 /mnt/nas-root（V7 §9.7 NAS 多媒体源设计）：
+#       /mnt/nas-root/Asia-Movie/
+#       /mnt/nas-root/Western-Movie/
+#       /mnt/nas-root/Documentary/
+#     具体扫描哪些子目录在 admin 后台「媒体配置 → NAS 配置」配置（nas_local_paths），
+#     运行时增删无需重启容器。
+#     本地无 NAS 时用占位目录（/tmp/...），容器可启动但扫描结果为空。
 #
 # 镜像版本：
 #   - 默认拉 latest（文档 §1.4 用户路径，简化部署）
@@ -77,9 +84,10 @@ services:
         condition: service_healthy
     volumes:
       - ./server/data:/app/data
-      # 设计文档 §8.6：NAS 媒体库只读挂载。
-      # ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}：本地无 NAS 时用占位目录避免启动失败
-      - ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}:/media/nas:ro
+      # [V7 §9.7] NAS 共享父目录只读挂载（TrueNAS 主机 → 容器 /mnt/nas-root）。
+      # ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}：本地无 NAS 时用占位目录避免启动失败。
+      # 容器内扫描的子目录列表由 nas_local_paths 配置（admin 后台动态管理）。
+      - ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}:/mnt/nas-root:ro
     networks:
       - xmedia-net
 

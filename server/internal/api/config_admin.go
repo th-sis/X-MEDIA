@@ -20,9 +20,12 @@ type configAdminHandlers struct {
 //
 // §6.9 转存/配额相关键以 pan_ 前缀动态放行；具体键由 handleConfigsPut 校验前缀。
 var writableConfigKeys = map[string]struct{}{
-	domain.ConfigTMDBAPIKey:             {},
-	domain.ConfigTMDBLanguage:           {},
-	domain.ConfigNASLocalPath:           {},
+	domain.ConfigTMDBAPIKey:   {},
+	domain.ConfigTMDBLanguage: {},
+	domain.ConfigNASLocalPath: {},
+	// [V7 §9.7] NAS 多媒体源列表（JSON 数组）+ 父目录展示
+	domain.ConfigNASLocalPaths:          {},
+	domain.ConfigNASRootPath:            {},
 	domain.ConfigNASEnabled:             {},
 	domain.ConfigPansearchURL:           {},
 	domain.ConfigPansearchAuthOn:        {},
