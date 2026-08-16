@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"xmedia/internal/domain"
@@ -131,6 +132,43 @@ func (r *mediaIndexRepo) ListBySource(ctx context.Context, sourceType string, ac
 func (r *mediaIndexRepo) DeleteBySourcePath(ctx context.Context, sourceType, filePath string) error {
 	_, err := r.db.write.ExecContext(ctx,
 		`DELETE FROM media_index WHERE source_type=? AND file_path=?`, sourceType, filePath)
+	return wrapDB(err)
+}
+
+// ListUnconfirmedBefore 返回 updated_at 早于 before 的 unconfirmed 条目（索引 Phase C 孤儿标记）。
+func (r *mediaIndexRepo) ListUnconfirmedBefore(ctx context.Context, before time.Time) ([]*domain.MediaIndex, error) {
+	rows, err := r.db.read.QueryContext(ctx, `
+		SELECT `+mediaIndexCols+` FROM media_index
+		WHERE match_status='unconfirmed' AND updated_at < ?`, tsValue(before))
+	if err != nil {
+		return nil, wrapDB(err)
+	}
+	defer rows.Close()
+	var out []*domain.MediaIndex
+	for rows.Next() {
+		m, err := scanMediaIndex(rows)
+		if err != nil {
+			return nil, wrapDB(err)
+		}
+		out = append(out, m)
+	}
+	return out, wrapDB(rows.Err())
+}
+
+// MarkOrphaned 批量将条目标记为 orphaned（索引 Phase C）。
+func (r *mediaIndexRepo) MarkOrphaned(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	_, err := r.db.write.ExecContext(ctx,
+		`UPDATE media_index SET match_status='orphaned', updated_at=CURRENT_TIMESTAMP
+		 WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
 	return wrapDB(err)
 }
 

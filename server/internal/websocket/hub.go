@@ -188,18 +188,34 @@ type ResolveFailedPayload struct {
 	Stage      string `json:"stage"`
 }
 
+// IndexStatusPayload 索引引擎进度（§9.7.1 WS index_status）。
+type IndexStatusPayload struct {
+	AccountID   int64  `json:"account_id"`
+	Scope       string `json:"scope"` // nas / pan
+	Phase       string `json:"phase"` // A / B / C / D
+	Status      string `json:"status"`
+	Processed   int    `json:"processed"`
+	Total       int    `json:"total"`
+	Matched     int    `json:"matched"`
+	Unconfirmed int    `json:"unconfirmed"`
+	Orphaned    int    `json:"orphaned"`
+	RatePerSec  int    `json:"rate_per_sec"`
+	FileCount   int    `json:"file_count"`
+	ErrorMsg    string `json:"error_msg"`
+}
+
 // HealthPayload 健康检查首条消息。
 type HealthPayload struct {
-	DB          string             `json:"db"`
-	TMDB        string             `json:"tmdb"`
-	Pansearch   string             `json:"pansearch"`
-	Accounts    []AccountHealth    `json:"accounts"`
-	NAS         NASHealth          `json:"nas"`
-	Index       IndexHealth        `json:"index"`
-	Capabilities domain.Capabilities `json:"capabilities"`
-	Version     string             `json:"version"`
-	ServerStartedAt string          `json:"server_started_at"`
-	Overall     string             `json:"overall"`
+	DB              string              `json:"db"`
+	TMDB            string              `json:"tmdb"`
+	Pansearch       string              `json:"pansearch"`
+	Accounts        []AccountHealth     `json:"accounts"`
+	NAS             NASHealth           `json:"nas"`
+	Index           IndexHealth         `json:"index"`
+	Capabilities    domain.Capabilities `json:"capabilities"`
+	Version         string              `json:"version"`
+	ServerStartedAt string              `json:"server_started_at"`
+	Overall         string              `json:"overall"`
 }
 
 type AccountHealth struct {

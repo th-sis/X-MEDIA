@@ -49,6 +49,8 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		RateLimiter:       xm.rateLimiter,
 		StreamProxy:       xm.streamProxy,
 		Pansearch:         xm.pansearch,
+		IndexEngine:       xm.indexEngine,
+		MediaIndex:        st.store.MediaIndex,
 		Hub:               xm.hub,
 		ServerVersion:     xmediaVersion,
 		ServerStartedAt:   time.Now(),

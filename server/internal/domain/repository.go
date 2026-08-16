@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-
-
 type AccountRepository interface {
 	Create(ctx context.Context, a *Account) (int64, error)
 	Update(ctx context.Context, a *Account) error
@@ -43,10 +41,10 @@ type NotificationRepository interface {
 
 // AvailabilityKey 标识一条可播放内容（季集维度）。
 type AvailabilityKey struct {
-	ExternalID     int64 `json:"external_id"`
+	ExternalID     int64  `json:"external_id"`
 	ExternalSource string `json:"external_source"`
-	Season         int   `json:"season"`
-	Episode        int   `json:"episode"`
+	Season         int    `json:"season"`
+	Episode        int    `json:"episode"`
 }
 
 type MediaIndexRepository interface {
@@ -58,12 +56,18 @@ type MediaIndexRepository interface {
 	Count(ctx context.Context) (int, error)
 	ListBySource(ctx context.Context, sourceType string, accountID int64) ([]*MediaIndex, error)
 	DeleteBySourcePath(ctx context.Context, sourceType, filePath string) error
+	// ListUnconfirmedBefore 返回 update 时间早于 before 的 unconfirmed 条目（索引 Phase C 孤儿标记）。
+	ListUnconfirmedBefore(ctx context.Context, before time.Time) ([]*MediaIndex, error)
+	// MarkOrphaned 批量将条目标记为 orphaned（索引 Phase C）。
+	MarkOrphaned(ctx context.Context, ids []int64) error
 }
 
 type MediaLibraryRepository interface {
 	Upsert(ctx context.Context, m *MediaLibrary) (int64, error)
 	Get(ctx context.Context, externalID int64, source string) (*MediaLibrary, error)
 	Touch(ctx context.Context, externalID int64, source string) error
+	// SearchByTitle 按标题模糊查询（索引引擎匹配器用，§9.2）。
+	SearchByTitle(ctx context.Context, title string, limit int) ([]*MediaLibrary, error)
 	// ListForEviction 按 last_accessed_at 升序返回候选淘汰列表。
 	ListForEviction(ctx context.Context, limit int) ([]*MediaLibrary, error)
 	// IsProtected 判断该条目是否被收藏/订阅/有播放记录（LRU 保护）。

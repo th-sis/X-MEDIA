@@ -25,6 +25,7 @@ import (
 	"xmedia/internal/crosstransfer"
 	"xmedia/internal/domain"
 	"xmedia/internal/file"
+	"xmedia/internal/indexengine"
 	"xmedia/internal/logx"
 	"xmedia/internal/media"
 	"xmedia/internal/notification"
@@ -71,6 +72,8 @@ type Deps struct {
 	RateLimiter     *resolve.RateLimiter
 	StreamProxy     *playback.StreamProxy
 	Pansearch       *pansearch.Service
+	IndexEngine     *indexengine.Service
+	MediaIndex      domain.MediaIndexRepository
 	Hub             *websocket.Hub
 	ServerVersion   string
 	ServerStartedAt time.Time
@@ -103,6 +106,7 @@ type Handler struct {
 	rateLimiter     *resolve.RateLimiter
 	streamProxy     *playback.StreamProxy
 	pansearch       *pansearch.Service
+	indexAdmin      *indexAdminHandlers
 	hub             *websocket.Hub
 	configs         domain.ConfigRepository
 	serverVersion   string
@@ -144,6 +148,9 @@ func NewRouter(d Deps) http.Handler {
 		configs:           d.Configs,
 		serverVersion:     d.ServerVersion,
 		serverStartedAt:   d.ServerStartedAt,
+	}
+	if d.IndexEngine != nil {
+		h.indexAdmin = &indexAdminHandlers{engine: d.IndexEngine, index: d.MediaIndex}
 	}
 
 	r := chi.NewRouter()
@@ -244,6 +251,19 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/configs/{id}/refresh", h.refreshRetentionTask)
 					r.Post("/configs/{id}/force-stop", h.forceStopRetentionTask)
 					r.Post("/configs/{id}/ack-scope-warn", h.ackRetentionScopeWarn)
+				})
+				r.Route("/index", func(r chi.Router) {
+					if h.indexAdmin == nil {
+						r.Get("/status", func(w http.ResponseWriter, _ *http.Request) {
+							writeOK(w, map[string]any{"progress": nil, "indexed_total": 0})
+						})
+						return
+					}
+					r.Get("/status", h.indexAdmin.handleIndexStatus)
+					r.Post("/nas/full", h.indexAdmin.handleIndexNASFull)
+					r.Post("/nas/incremental", h.indexAdmin.handleIndexNASIncremental)
+					r.Post("/rebuild/{account_id}", h.indexAdmin.handleIndexRebuild)
+					r.Post("/cleanup/{account_id}", h.indexAdmin.handleIndexCleanup)
 				})
 				r.Get("/notifications", h.listNotifications)
 				r.Get("/notifications/unread-count", h.notificationUnreadCount)

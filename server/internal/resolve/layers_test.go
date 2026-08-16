@@ -81,6 +81,10 @@ func (m *mockIndexRepo) ListBySource(context.Context, string, int64) ([]*domain.
 	return nil, nil
 }
 func (m *mockIndexRepo) DeleteBySourcePath(context.Context, string, string) error { return nil }
+func (m *mockIndexRepo) ListUnconfirmedBefore(context.Context, time.Time) ([]*domain.MediaIndex, error) {
+	return nil, nil
+}
+func (m *mockIndexRepo) MarkOrphaned(context.Context, []int64) error { return nil }
 
 type mockSubsRepo struct{ added []*domain.Subscription }
 
@@ -106,6 +110,12 @@ func (m *mockLibraryRepo) Get(context.Context, int64, string) (*domain.MediaLibr
 	return m.media, nil
 }
 func (m *mockLibraryRepo) Touch(context.Context, int64, string) error { return nil }
+func (m *mockLibraryRepo) SearchByTitle(_ context.Context, title string, limit int) ([]*domain.MediaLibrary, error) {
+	if m.media == nil {
+		return nil, nil
+	}
+	return []*domain.MediaLibrary{m.media}, nil
+}
 func (m *mockLibraryRepo) ListForEviction(context.Context, int) ([]*domain.MediaLibrary, error) {
 	return nil, nil
 }

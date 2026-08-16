@@ -8,6 +8,7 @@ import (
 	"xmedia/internal/account"
 	"xmedia/internal/domain"
 	"xmedia/internal/driver"
+	"xmedia/internal/indexengine"
 	"xmedia/internal/logx"
 	"xmedia/internal/media"
 	"xmedia/internal/pansearch"
@@ -28,6 +29,8 @@ type xmediaBundle struct {
 	hub         *websocket.Hub
 	resolve     *resolve.Service
 	rateLimiter *resolve.RateLimiter
+	// [P0-3] 索引引擎（§9）：NAS 三阶段扫描 + 匹配 + 增量维护
+	indexEngine *indexengine.Service
 }
 
 func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *logx.Manager) *xmediaBundle {
@@ -81,6 +84,15 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 	winSec := configInt(st.store.Configs, domain.ConfigResolveRateLimitSec, 30)
 	rateLimiter := resolve.NewRateLimiter(st.store.RateLimits, maxReq, winSec)
 
+	// [P0-3] 索引引擎（§9）
+	indexEngine := indexengine.NewService(indexengine.Options{
+		MediaIndex:   st.store.MediaIndex,
+		MediaLibrary: st.store.MediaLibrary,
+		Configs:      st.store.Configs,
+		Hub:          hub,
+		WorkerCount:  8,
+	})
+
 	return &xmediaBundle{
 		tmdb:        tmdbSvc,
 		media:       mediaSvc,
@@ -89,6 +101,7 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		hub:         hub,
 		resolve:     resolveSvc,
 		rateLimiter: rateLimiter,
+		indexEngine: indexEngine,
 	}
 }
 

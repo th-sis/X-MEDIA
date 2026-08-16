@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 
 	"xmedia/internal/domain"
 )
@@ -74,6 +75,35 @@ func (r *mediaLibraryRepo) Get(ctx context.Context, externalID int64, source str
 		return nil, domain.Errf(domain.CodeNotFound)
 	}
 	return m, wrapDB(err)
+}
+
+// SearchByTitle 按标题模糊查询（LIKE 双向包含，索引匹配器用 §9.2）。
+func (r *mediaLibraryRepo) SearchByTitle(ctx context.Context, title string, limit int) ([]*domain.MediaLibrary, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	pattern := "%" + title + "%"
+	rows, err := r.db.read.QueryContext(ctx, `
+		SELECT `+mediaLibraryCols+` FROM media_library
+		WHERE title LIKE ? OR title_orig LIKE ?
+		ORDER BY cached_at DESC LIMIT ?`, pattern, pattern, limit)
+	if err != nil {
+		return nil, wrapDB(err)
+	}
+	defer rows.Close()
+	var out []*domain.MediaLibrary
+	for rows.Next() {
+		m, err := scanMediaLibrary(rows)
+		if err != nil {
+			return nil, wrapDB(err)
+		}
+		out = append(out, m)
+	}
+	return out, wrapDB(rows.Err())
 }
 
 func (r *mediaLibraryRepo) Touch(ctx context.Context, externalID int64, source string) error {
