@@ -113,6 +113,18 @@
         <tbody id="acc-body"><tr><td colspan="3" class="muted">加载中...</td></tr></tbody>
       </table>
     </div>
+
+    <div class="card">
+      <h2>系统配置</h2>
+      <div class="kv"><span>TMDB API Key</span></div>
+      <input id="cfg-tmdb" placeholder="未配置（演示模式）" style="width:100%;margin:6px 0;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">
+      <div class="kv" style="border:none"><span>NAS 本地路径</span></div>
+      <input id="cfg-nas" placeholder="未配置（例如 D:\\Media）" style="width:100%;margin:6px 0;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">
+      <div class="kv" style="border:none"><span>PanSou 地址</span></div>
+      <input id="cfg-pan" placeholder="http://localhost:8888" style="width:100%;margin:6px 0;padding:9px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px">
+      <div style="margin-top:12px"><button id="btn-save-config">保存配置</button></div>
+      <p class="muted" id="cfg-msg" style="margin-top:8px"></p>
+    </div>
   </div>
 </div>
 
@@ -226,10 +238,47 @@ $('btn-scan-inc').onclick = async () => {
   setTimeout(() => { btn.disabled = false; refreshAll(); }, 1500);
 };
 
+async function loadConfigs() {
+  try {
+    const res = await fetch('/api/admin/configs/');
+    if (res.status === 401) { $('cfg-msg').textContent = '登录后可编辑配置'; return; }
+    const data = await res.json();
+    const items = (data.data && data.data.items) || {};
+    $('cfg-tmdb').value = items.tmdb_api_key || '';
+    $('cfg-nas').value = items.nas_local_path || '';
+    $('cfg-pan').value = items.pansearch_url || '';
+  } catch (e) { $('cfg-msg').textContent = '配置读取失败'; }
+}
+
+$('btn-save-config').onclick = async () => {
+  const btn = $('btn-save-config'); btn.disabled = true;
+  const msg = $('cfg-msg');
+  const entries = [
+    ['tmdb_api_key', $('cfg-tmdb').value],
+    ['nas_local_path', $('cfg-nas').value],
+    ['pansearch_url', $('cfg-pan').value],
+  ];
+  let okCount = 0;
+  for (const [key, value] of entries) {
+    if (!value) continue;
+    const res = await api('/api/admin/configs/', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    if (res.ok) { okCount++; } else { msg.textContent = '保存失败（' + key + '）：HTTP ' + res.status; }
+  }
+  msg.textContent = '已保存 ' + okCount + ' 项配置';
+  toast(msg.textContent);
+  btn.disabled = false;
+  refreshAll();
+};
+
 (async () => {
   await checkAuth();
-  if (authed) showMain(); else showMain(); // 概览区无需登录即可查看
+  showMain(); // 概览区无需登录即可查看
   await refreshAll();
+  await loadConfigs();
   setInterval(async () => { const r = await fetch('/api/state/snapshot'); if (r.ok) { const s = await r.json(); if (s.index_progress) renderIndex(s.index_progress); } }, 3000);
 })();
 </script>

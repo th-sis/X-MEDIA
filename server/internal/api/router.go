@@ -107,6 +107,7 @@ type Handler struct {
 	streamProxy     *playback.StreamProxy
 	pansearch       *pansearch.Service
 	indexAdmin      *indexAdminHandlers
+	configAdmin     *configAdminHandlers
 	hub             *websocket.Hub
 	configs         domain.ConfigRepository
 	mediaIndex      domain.MediaIndexRepository
@@ -154,6 +155,7 @@ func NewRouter(d Deps) http.Handler {
 	if d.IndexEngine != nil {
 		h.indexAdmin = &indexAdminHandlers{engine: d.IndexEngine, index: d.MediaIndex}
 	}
+	h.configAdmin = &configAdminHandlers{configs: d.Configs}
 
 	r := chi.NewRouter()
 	r.Use(trackResponseCommit)
@@ -269,6 +271,10 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/nas/incremental", h.indexAdmin.handleIndexNASIncremental)
 					r.Post("/rebuild/{account_id}", h.indexAdmin.handleIndexRebuild)
 					r.Post("/cleanup/{account_id}", h.indexAdmin.handleIndexCleanup)
+				})
+				r.Route("/configs", func(r chi.Router) {
+					r.Get("/", h.configAdmin.handleConfigsGet)
+					r.Put("/", h.configAdmin.handleConfigsPut)
 				})
 				r.Get("/notifications", h.listNotifications)
 				r.Get("/notifications/unread-count", h.notificationUnreadCount)
