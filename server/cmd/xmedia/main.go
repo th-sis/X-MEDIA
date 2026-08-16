@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -36,7 +37,11 @@ func main() {
 		Level: cfg.LogLevel,
 	})
 	if err != nil {
-		panic(err)
+		// 日志目录创建失败时降级为 stdout-only，不阻塞服务启动。
+		// 常见原因：/app/data 挂载点权限不足（NAS SMB/CIFS 挂载常见问题）。
+		// 管理后台仍可正常访问；日志会丢失落盘，但服务可运行。
+		fmt.Fprintf(os.Stderr, "WARN: log dir init failed: %v; falling back to stdout-only\n", err)
+		logs, _ = logx.New(logx.Options{DisableFile: true, Level: cfg.LogLevel})
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
