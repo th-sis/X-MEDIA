@@ -37,14 +37,8 @@ env:
 
 jobs:
   build:
-    name: build & push (${{ matrix.platform }})
+    name: build & push (multi-arch)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,11 +59,6 @@ jobs:
       - name: Compute tags
         id: meta
         run: |
-          # tags: latest + commit SHA + version + 手动输入（如有）
-          # docker/build-push-action@v6 的 tags 参数接受多行 YAML list：
-          #   tags: |
-          #     name:tag1
-          #     name:tag2
           SHA_TAG="sha-${GITHUB_SHA::7}"
           {
             echo "tags<<EOF"
@@ -78,7 +67,6 @@ jobs:
             if [ -n "${{ github.event.inputs.tag }}" ]; then
               echo "${REGISTRY}/${IMAGE_NAME}:${{ github.event.inputs.tag }}"
             fi
-            # main 分支自动加 latest
             if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
               echo "${REGISTRY}/${IMAGE_NAME}:latest"
             fi
@@ -86,12 +74,12 @@ jobs:
             echo "version=${VERSION}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
+      - name: Build and push (linux/amd64 + linux/arm64)
         uses: docker/build-push-action@v6
         with:
           context: ./server
           file: ./server/Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
