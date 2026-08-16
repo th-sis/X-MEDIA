@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -22,6 +23,10 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	notifySvc.Register(core.bus)
 
 	xm := wireXMedia(st, svc, core, logs)
+	// [A1] §28.2 启动恢复：接管重启前遗留的 active 任务（HTTP 就绪前同步执行）
+	if xm.resolve != nil {
+		xm.resolve.RecoverStartup(context.Background())
+	}
 	router := api.NewRouter(api.Deps{
 		Logs:              logs,
 		AccountSvc:        svc.account,

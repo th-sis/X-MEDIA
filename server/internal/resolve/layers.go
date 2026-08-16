@@ -363,6 +363,12 @@ func (s *Service) runP2(ctx context.Context, t *domain.ResolveTask) bool {
 	t.ProgressPct = 75
 	_ = s.tasks.Update(context.Background(), t)
 
+	return s.pollOfflineDownload(ctx, t, od, taskID, target)
+}
+
+// pollOfflineDownload 轮询 115 离线任务直至完成/失败/超时（§6.5）。
+// 超时保持 running（§28.2 启动恢复可重新接管）。
+func (s *Service) pollOfflineDownload(ctx context.Context, t *domain.ResolveTask, od driver.OfflineDownloader, taskID string, target domain.Account) bool {
 	pollCtx, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
 	ticker := time.NewTicker(3 * time.Second)

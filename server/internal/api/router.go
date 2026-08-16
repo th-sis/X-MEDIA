@@ -109,6 +109,7 @@ type Handler struct {
 	indexAdmin      *indexAdminHandlers
 	hub             *websocket.Hub
 	configs         domain.ConfigRepository
+	mediaIndex      domain.MediaIndexRepository
 	serverVersion   string
 	serverStartedAt time.Time
 }
@@ -146,6 +147,7 @@ func NewRouter(d Deps) http.Handler {
 		pansearch:         d.Pansearch,
 		hub:               d.Hub,
 		configs:           d.Configs,
+		mediaIndex:        d.MediaIndex,
 		serverVersion:     d.ServerVersion,
 		serverStartedAt:   d.ServerStartedAt,
 	}
@@ -168,6 +170,7 @@ func NewRouter(d Deps) http.Handler {
 
 		// X-MEDIA 播放器 API（开放，无鉴权，便于开箱即测）
 		r.Get("/capabilities", h.capabilities)
+		r.Get("/state/snapshot", h.stateSnapshot)
 		r.Get("/tmdb/home", h.tmdbHome)
 		r.Get("/tmdb/discover", h.tmdbDiscover)
 		r.Get("/tmdb/search", h.tmdbSearch)

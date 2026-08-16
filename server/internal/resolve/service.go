@@ -323,6 +323,18 @@ func (s *Service) ResultOf(ctx context.Context, taskID int64) (*domain.ResolveTa
 	return s.tasks.Get(ctx, taskID)
 }
 
+// ActiveCount 返回 active（running/pending）任务数（/api/state/snapshot 用）。
+func (s *Service) ActiveCount(ctx context.Context) (int, error) {
+	if s.tasks == nil {
+		return 0, nil
+	}
+	active, err := s.tasks.ListActive(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return len(active), nil
+}
+
 // Result 查询任务结果，done 时重新签发 stream_url 供轮询兜底。
 func (s *Service) Result(ctx context.Context, taskID int64) (*domain.ResolveTask, string, error) {
 	t, err := s.tasks.Get(ctx, taskID)
