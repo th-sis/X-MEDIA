@@ -42,7 +42,7 @@ func (s *Service) CheckLinks(ctx context.Context, items []CheckItem) ([]CheckRes
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.client.Do(req)
+	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

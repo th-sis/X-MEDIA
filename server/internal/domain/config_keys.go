@@ -12,6 +12,8 @@ const (
 	ConfigPansearchToken       = "pansearch_token"
 	ConfigPansearchCAMBlock    = "pansearch_cam_block"
 	ConfigPansearch4KPriority  = "pansearch_4k_priority"
+	// [v7 §8.5] 网盘优先级列表（逗号分隔）：搜索结果按此顺序排序；未列出 source 沉底。
+	ConfigPansearchPriority = "pansearch_priority"
 	ConfigNASLocalPath         = "nas_local_path"
 	ConfigNASFullScanDay       = "nas_index_full_scan_day"
 	ConfigNASIncrementalDay    = "nas_index_incremental_day"
@@ -57,6 +59,7 @@ var ConfigDefaults = map[string]string{
 	ConfigPansearchAuthOn:        "false",
 	ConfigPansearchCAMBlock:      "true",
 	ConfigPansearch4KPriority:    "true",
+	ConfigPansearchPriority:      "pan115,quark,pan123,baidu,guangya",
 	ConfigNASFullScanDay:         "1",
 	ConfigNASIncrementalDay:      "7",
 	ConfigWebSocketEnabled:       "true",
