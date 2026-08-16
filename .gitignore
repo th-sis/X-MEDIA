@@ -16,13 +16,7 @@ server/internal/**/hermes_*.go
 # 临时搬迁的二进制（防 antivirus lock 残留）
 /server/.bin_old/
 
-# Flutter 桌面构建产物（runner/Release/profile 等体积巨大）
-/client/build/
-/client/.dart_tool/
-/client/.flutter-plugins
-/client/.flutter-plugins-dependencies
-/client/.pub-cache/
-/client/.pub/
+# Flutter 桌面构建产物：详见 client/.gitignore（Flutter 模板已含 build/.dart_tool/.pub/.pub-cache 等）
 
 # 系统
 .DS_Store
