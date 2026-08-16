@@ -38,7 +38,29 @@
 
 ## 快速开始
 
-### 1. 启动后端
+### 方式一：Docker Compose 部署（推荐，NAS 一键部署）
+
+x-media 镜像已发布到 GitHub Container Registry（私有包），由 GitHub Actions 在每次 push to main 时自动构建并推送。
+
+```bash
+# 1. 登录 GHCR（拉取私有镜像需要）
+echo $GITHUB_TOKEN | docker login ghcr.io -u th-sis --password-stdin
+
+# 2. 设置 NAS 路径（如无 NAS 可跳过，compose 会用占位目录）
+export NAS_MEDIA_PATH=/mnt/nas/media
+
+# 3. 启动（两个容器：xmedia + pansou）
+docker compose up -d
+```
+
+- 管理后台：<http://your-host:38088>（**首次启动后必须立即修改默认管理员密码**；初始化向导 `OnboardingWizard` 会强制引导改密，见 `server/README.md`）
+- 健康检查：`GET /api/health`
+- 能力预检：`GET /api/capabilities`
+- 镜像 tag：`latest`（默认）/ `7.0.0`（固定版本便于回滚）/ `sha-xxxxxxx`（特定 commit）
+
+无需任何配置即可进入演示模式：`/api/tmdb/home` 返回 12 个榜单，`POST /api/resolve` 返回演示播放流。
+
+### 方式二：本地开发（裸 Go 运行）
 
 需要 Go 1.26+。
 
@@ -48,11 +70,12 @@ go run ./cmd/xmedia
 # 默认监听 :38088，数据目录 ./data
 ```
 
-- 管理后台：<http://127.0.0.1:38088>（**首次启动后必须立即修改默认管理员密码**；初始化向导 `OnboardingWizard` 会强制引导改密，见 `server/README.md`）
-- 健康检查：`GET /api/health`
-- 能力预检：`GET /api/capabilities`
+如需 PanSou 盘搜，本地跑：
 
-无需任何配置即可进入演示模式：`/api/tmdb/home` 返回 12 个榜单，`POST /api/resolve` 返回演示播放流。
+```bash
+docker run -d --name pansou -p 8888:8888 ghcr.io/fish2018/pansou:latest
+# 然后管理后台把 PanSou URL 改为 http://localhost:8888
+```
 
 ### 2. 运行客户端（开发）
 

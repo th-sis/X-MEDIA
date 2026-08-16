@@ -5,15 +5,23 @@
 #
 # 服务拓扑:
 #   pansou   - 盘搜后端 (Sidecar，ghcr.io/fish2018/pansou:latest)
-#   xmedia   - X-MEDIA 主服务 (本地 Dockerfile build)
+#   xmedia   - X-MEDIA 主服务 (GHCR 镜像，ghcr.io/th-sis/x-media:latest)
 #
 # 关键约定:
 #   - xmedia 默认监听 :38088（与 Go 代码 ConfigDefaults/V7 端口约定一致）
 #   - pansou 镜像在 GHCR（PanSou 官方仅发布 GHCR，无 Docker Hub 镜像）
+#   - xmedia 镜像在 GHCR，由 GitHub Actions 自动 build/push（私有包）：
+#     https://github.com/th-sis/X-MEDIA/actions/workflows/docker-publish.yml
 #   - pansou CHANNELS/ENABLED_PLUGINS 必须设置，否则搜不到任何资源
 #   - pansou 端口按设计文档 §8.6 不暴露到宿主机（仅 xmedia-net 内部可达）
 #   - NAS 媒体库路径由 NAS_MEDIA_PATH 环境变量注入，本地不设置时使用占位目录
 #     部署时: export NAS_MEDIA_PATH=/mnt/nas/media 后再 docker compose up
+#
+# 镜像版本：
+#   - 默认拉 latest（文档 §1.4 用户路径，简化部署）
+#   - 生产建议指定版本（如 ghcr.io/th-sis/x-media:7.0.0）便于回滚
+#   - 拉取镜像需登录 GHCR（私有包）：
+#     echo $GITHUB_TOKEN | docker login ghcr.io -u th-sis --password-stdin
 
 services:
   pansou:
@@ -50,11 +58,11 @@ services:
       - xmedia-net
 
   xmedia:
-    # 设计文档 §8.6 示例用 `build: .`，但本仓库 Dockerfile 位于 server/。
-    # 保持 context=./server（与 Dockerfile 物理位置一致），dockerfile 字段显式声明。
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    # 设计文档 §1.4：用户从 docker-compose.yml 启动 x-media + pansou 两个容器，
+    # 无需本地 build。镜像由 .github/workflows/docker-publish.yml 在 push to main
+    # 时自动构建并推送到 GHCR（私有包）。换版本时改 image tag 即可。
+    image: ghcr.io/th-sis/x-media:latest
+    # 如需固定版本便于回滚：image: ghcr.io/th-sis/x-media:7.0.0
     container_name: xmedia
     restart: unless-stopped
     ports:

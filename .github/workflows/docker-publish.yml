@@ -1,0 +1,132 @@
+name: docker-publish
+
+# [GHCR private] 自动构建并推送 x-media Docker 镜像到 GitHub Container Registry。
+#
+# 设计文档 V7 §1.4 Step 1: "用户从 GitHub release 下载 docker-compose.yml，
+# 解压/启动两个容器：x-media + pansou"。
+# 配合 docker-compose.yml 使用：compose 直接拉 ghcr.io/th-sis/x-media:latest，
+# NAS 一键部署，无需本地 build。
+#
+# 触发条件：
+#   - push to main（自动打 latest + commit SHA + version tag）
+#   - 手动触发（workflow_dispatch），可手动指定 tag
+#
+# 镜像可见性：私有（packages: read/write 仅 th-sis）
+# 多架构：linux/amd64 + linux/arm64（覆盖 x86 NAS + 树莓派/NAS ARM）
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '自定义 tag (留空用 latest)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/x-media
+  # Go 代码内的版本号（internal/app/wire_xmedia.go const xmediaVersion）
+  VERSION: 7.0.0
+
+jobs:
+  build:
+    name: build & push (${{ matrix.platform }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags
+        id: meta
+        run: |
+          # tags: latest + commit SHA + version + 手动输入（如有）
+          SHA_TAG="sha-${GITHUB_SHA::7}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            INPUT_TAG="${{ github.event.inputs.tag }}"
+          else
+            INPUT_TAG=""
+          fi
+          TAGS="--tag ${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          TAGS="${TAGS} --tag ${REGISTRY}/${IMAGE_NAME}:${SHA_TAG}"
+          if [ -n "${INPUT_TAG}" ]; then
+            TAGS="${TAGS} --tag ${REGISTRY}/${IMAGE_NAME}:${INPUT_TAG}"
+          fi
+          # main 分支自动加 latest
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            TAGS="${TAGS} --tag ${REGISTRY}/${IMAGE_NAME}:latest"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=x-media
+            org.opencontainers.image.description=X-MEDIA V7 — TMDB-driven private media center (Go backend + Vue admin + Flutter client)
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=PolyForm-Noncommercial-1.0.0
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  visibility:
+    # 设置包为私有（GHCR 默认继承仓库可见性，public 仓库 → public 包；这里强制改 private）
+    name: enforce private visibility
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set GHCR package to private
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.packages.updatePackageVersionVisibility({
+                package_type: 'container',
+                package_name: 'x-media',
+                package_version_id: await (async () => {
+                  const versions = await github.paginate(
+                    github.rest.packages.getAllPackageVersionsForPackageOwnedByUser,
+                    { package_type: 'container', package_name: 'x-media', per_page: 1 }
+                  );
+                  return versions[0]?.id;
+                })(),
+                owner: context.repo.owner,
+                visibility: 'private'
+              });
+              console.log('✓ GHCR package set to private');
+            } catch (e) {
+              console.log('⚠ visibility update failed:', e.message);
+            }
