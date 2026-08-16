@@ -1,25 +1,86 @@
+# X-MEDIA 部署编排
+#
+# 启动: docker compose up -d
+# 访问: http://<host>:38088 (管理后台 + Flutter 客户端入口)
+#
+# 服务拓扑:
+#   pansou   - 盘搜后端 (Sidecar，ghcr.io/fish2018/pansou:latest)
+#   xmedia   - X-MEDIA 主服务 (本地 Dockerfile build)
+#
+# 关键约定:
+#   - xmedia 默认监听 :38088（与 Go 代码 ConfigDefaults/V7 端口约定一致）
+#   - pansou 镜像在 GHCR（PanSou 官方仅发布 GHCR，无 Docker Hub 镜像）
+#   - pansou CHANNELS/ENABLED_PLUGINS 必须设置，否则搜不到任何资源
+#   - pansou 端口按设计文档 §8.6 不暴露到宿主机（仅 xmedia-net 内部可达）
+#   - NAS 媒体库路径由 NAS_MEDIA_PATH 环境变量注入，本地不设置时使用占位目录
+#     部署时: export NAS_MEDIA_PATH=/mnt/nas/media 后再 docker compose up
+
 services:
+  pansou:
+    image: ghcr.io/fish2018/pansou:latest
+    container_name: pansou
+    restart: unless-stopped
+    # 设计文档 §8.6：pansou 端口仅内部网络可达，不暴露到宿主机
+    expose:
+      - "8888"
+    environment:
+      - PORT=8888
+      - CHANNELS=tgsearchers6,Aliyun_4K_Movies,bdbdndn11,yunpanx,bsbdbfjfjff,yp123pan,sbsbsnsqq,yunpanxunlei,tianyifc,BaiduCloudDisk,txtyzy,peccxinpd,gotopan,PanjClub,kkxlzy,baicaoZY,MCPH01,MCPH02,MCPH03,bdwpzhpd,ysxb48,jdjdn1111,yggpan,MCPH086,zaihuayun,Q66Share,ucwpzy,shareAliyun,alyp_1,dianyingshare,Quark_Movies,XiangxiuNBB,ydypzyfx,ucquark,xx123pan,yingshifenxiang123,zyfb123,tyypzhpd,tianyirigeng,cloudtianyi,hdhhd21,Lsp115,oneonefivewpfx,qixingzhenren,taoxgzy,Channel_Shares_115,tyysypzypd,vip115hot,wp123zy,yunpan139,yunpan189,yunpanuc,yydf_hzl,leoziyuan,Q_dongman,yoyokuakeduanju,TG654TG,WFYSFX02,QukanMovie,yeqingjie_GJG666,movielover8888_film3,Baidu_netdisk,D_wusun,FLMdongtianfudi,KaiPanshare,QQZYDAPP,rjyxfx,PikPak_Share_Channel,btzhi,newproductsourcing,cctv1211,duan_ju,QuarkFree,yunpanNB,kkdj001,xxzlzn,pxyunpanxunlei,jxwpzy,kuakedongman,liangxingzhinan,xiangnikanj,solidsexydoll,guoman4K,zdqxm,kduanju,cilidianying,CBduanju,SharePanFilms,dzsgx,BooksRealm,Oscar_4Kmovies,douerpan,baidu_yppan,Q_jilupian,Netdisk_Movies,yunpanquark,ammmziyuan,ciliziyuanku,cili8888,jzmm_123pan,Q_dianying,domgmingapk,dianying4k,q_dianshiju,tgbokee,ucshare,godupan,gokuapan,gimy115,WFYSFX03,peccxin,Movie888035,xlwpzy,zyywpzy,wydwpzy,gimy100,ucshare,gimy115iso
+      - ENABLED_PLUGINS=hunhepan,jikepan,panwiki,pansearch,panta,qupansou,hdr4k,pan666,susu,thepiratebay,wanou,xuexizhinan,panyq,zhizhen,labi,muou,ouge,shandian,duoduo,huban,cyg,erxiao,miaoso,fox4k,pianku,clmao,wuji,cldi,xiaozhang,libvio,leijing,xb6v,xys,ddys,hdmoli,yuhuage,u3c3,javdb,clxiong,jutoushe,sdso,xiaoji,xdyh,haisou,bixin,djgou,nyaa,xinjuc,aikanzy,qupanshe,xdpan,discourse,yunsou,qqpd,ahhhhfs,nsgame,gying,quark4k,quarksoo,sousou,ash,weibo,feikuai,kkmao,alupan,ypfxw,mikuclub,daishudj,dyyj,meitizy,jsnoteclub,mizixing,lou1,yiove,zxzj,qingying,kkv,yulinshufa
+      - CACHE_ENABLED=true
+      - CACHE_PATH=/app/cache
+      - CACHE_MAX_SIZE=100
+      - CACHE_TTL=60
+      - ASYNC_PLUGIN_ENABLED=true
+      - ASYNC_RESPONSE_TIMEOUT=4
+      - ASYNC_MAX_BACKGROUND_WORKERS=20
+      - ASYNC_MAX_BACKGROUND_TASKS=100
+      - ASYNC_CACHE_TTL_HOURS=1
+      # 如需代理访问 TG 站点：取消注释并设代理地址
+      # - PROXY=socks5://host.docker.internal:1080
+    volumes:
+      - pansou-cache:/app/cache
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8888/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - xmedia-net
+
   xmedia:
-    build: ./server
+    # 设计文档 §8.6 示例用 `build: .`，但本仓库 Dockerfile 位于 server/。
+    # 保持 context=./server（与 Dockerfile 物理位置一致），dockerfile 字段显式声明。
+    build:
+      context: ./server
+      dockerfile: Dockerfile
     container_name: xmedia
     restart: unless-stopped
     ports:
       - "38088:38088"
     environment:
       - TZ=Asia/Shanghai
+      # 设计文档 §8.6：xmedia 通过 env 知道 PanSou 地址。
+      # xmedia 启动时会自动把 PANSOU_URL 注入 DB configs.pansearch_url（见 internal/app/wire_xmedia.go）
       - PANSOU_URL=http://pansou:8888
     depends_on:
-      - pansou
+      pansou:
+        condition: service_healthy
     volumes:
       - ./server/data:/app/data
       - ./server/strm:/app/strm
+      # 设计文档 §8.6：NAS 媒体库只读挂载。
+      # ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}：本地无 NAS 时用占位目录避免启动失败
+      - ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}:/media/nas:ro
+    networks:
+      - xmedia-net
 
-  pansou:
-    image: ghcr.io/fish2018/pansou:latest
-    container_name: pansou
-    restart: unless-stopped
-    ports:
-      - "8888:8888"
-    # 如需代理访问 TG：
-    # environment:
-    #   - PROXY=socks5://host.docker.internal:1080
+networks:
+  xmedia-net:
+    name: xmedia-net
+    driver: bridge
+
+volumes:
+  pansou-cache:
+    name: pansou-cache
