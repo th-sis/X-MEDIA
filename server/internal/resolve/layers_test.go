@@ -99,6 +99,7 @@ func (m *mockSubsRepo) UpdateStatus(context.Context, int64, domain.SubStatus, st
 }
 func (m *mockSubsRepo) Exists(context.Context, int64, string) (bool, error) { return false, nil }
 func (m *mockSubsRepo) ActiveCount(context.Context) (int, error)            { return 0, nil }
+func (m *mockSubsRepo) TouchSearch(context.Context, int64) error            { return nil }
 
 type mockLibraryRepo struct{ media *domain.MediaLibrary }
 

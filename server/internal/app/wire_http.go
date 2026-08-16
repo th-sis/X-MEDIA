@@ -9,6 +9,7 @@ import (
 	"xmedia/internal/api"
 	"xmedia/internal/cache"
 	"xmedia/internal/config"
+	"xmedia/internal/domain"
 	"xmedia/internal/logx"
 	"xmedia/internal/notification"
 	"xmedia/internal/settings"
@@ -26,6 +27,11 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 	// [A1] §28.2 启动恢复：接管重启前遗留的 active 任务（HTTP 就绪前同步执行）
 	if xm.resolve != nil {
 		xm.resolve.RecoverStartup(context.Background())
+	}
+	// [A3] §20 订阅自动搜寻：后台周期执行（间隔可配，默认 7 天）
+	if xm.subSearcher != nil {
+		days := configInt(st.store.Configs, domain.ConfigSubscriptionSearchDays, 7)
+		xm.subSearcher.Start(context.Background(), time.Duration(days)*24*time.Hour)
 	}
 	router := api.NewRouter(api.Deps{
 		Logs:              logs,

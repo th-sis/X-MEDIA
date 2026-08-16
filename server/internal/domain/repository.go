@@ -99,6 +99,8 @@ type SubscriptionRepository interface {
 	UpdateStatus(ctx context.Context, id int64, status SubStatus, resultSource string, resultAccountID int64, resultPath string) error
 	Exists(ctx context.Context, externalID int64, source string) (bool, error)
 	ActiveCount(ctx context.Context) (int, error)
+	// TouchSearch 记录一次自动搜寻：search_count+1 并刷新 last_search_at（§20）。
+	TouchSearch(ctx context.Context, id int64) error
 }
 
 type PansearchCacheRepository interface {

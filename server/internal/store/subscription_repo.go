@@ -94,3 +94,11 @@ func (r *subscriptionRepo) ActiveCount(ctx context.Context) (int, error) {
 		`SELECT COUNT(1) FROM subscriptions WHERE status IN ('watching','found')`).Scan(&n)
 	return n, wrapDB(err)
 }
+
+// TouchSearch 记录一次自动搜寻：search_count+1 并刷新 last_search_at（§20）。
+func (r *subscriptionRepo) TouchSearch(ctx context.Context, id int64) error {
+	_, err := r.db.write.ExecContext(ctx, `
+		UPDATE subscriptions SET last_search_at=CURRENT_TIMESTAMP,
+			search_count=search_count+1, updated_at=CURRENT_TIMESTAMP WHERE id=?`, id)
+	return wrapDB(err)
+}

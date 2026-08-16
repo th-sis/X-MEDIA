@@ -204,6 +204,16 @@ type IndexStatusPayload struct {
 	ErrorMsg    string `json:"error_msg"`
 }
 
+// SubReadyPayload 订阅自动搜寻命中（§20 subscription_ready）。
+type SubReadyPayload struct {
+	ExternalID     int64  `json:"external_id"`
+	ExternalSource string `json:"external_source"`
+	MediaType      string `json:"media_type"`
+	Title          string `json:"title"`
+	Year           int    `json:"year"`
+	ResultSource   string `json:"result_source"`
+}
+
 // HealthPayload 健康检查首条消息。
 type HealthPayload struct {
 	DB              string              `json:"db"`

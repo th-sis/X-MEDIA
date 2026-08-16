@@ -31,6 +31,8 @@ type xmediaBundle struct {
 	rateLimiter *resolve.RateLimiter
 	// [P0-3] 索引引擎（§9）：NAS 三阶段扫描 + 匹配 + 增量维护
 	indexEngine *indexengine.Service
+	// [A3] §20 订阅自动搜寻器
+	subSearcher *resolve.SubscriptionSearcher
 }
 
 func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *logx.Manager) *xmediaBundle {
@@ -93,6 +95,14 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		WorkerCount:  8,
 	})
 
+	// [A3] §20 订阅自动搜寻器（复用 resolve 的 P1 轻量探测）
+	subSearcher := resolve.NewSubscriptionSearcher(resolve.SubscriptionSearcherOptions{
+		Subscriptions: st.store.Subscriptions,
+		Probe:         resolveSvc.ProbeAvailability,
+		Hub:           hub,
+		Log:           logs.For("subscription-searcher"),
+	})
+
 	return &xmediaBundle{
 		tmdb:        tmdbSvc,
 		media:       mediaSvc,
@@ -102,6 +112,7 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		resolve:     resolveSvc,
 		rateLimiter: rateLimiter,
 		indexEngine: indexEngine,
+		subSearcher: subSearcher,
 	}
 }
 

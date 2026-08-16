@@ -29,30 +29,33 @@ const (
 	ConfigResolveDemoFallback = "resolve_demo_fallback"
 	// [v7 整改] P0 NAS 索引匹配度阈值，低于阈值直接跳 P0 进 P1
 	ConfigResolveP0MinScore = "resolve_p0_min_score"
+	// [A3] §20 订阅自动搜寻间隔（天）
+	ConfigSubscriptionSearchDays = "subscription_search_days"
 	// [v7 整改] 启动配置验证结果持久化（无需修改）
 	// - 用 Get(validation_last_run) 查询最近一次运行时间
 )
 
 // ConfigDefaults 启动时缺失配置的默认值。
 var ConfigDefaults = map[string]string{
-	ConfigTMDBLanguage:         "zh-CN",
-	ConfigResolvePriority:      `["nas","pan115","quark","pan123","baidu","guangya"]`,
-	ConfigResolveMagnetEnabled: "true",
-	ConfigResolveMagnetTarget:  "pan115",
-	ConfigPansearchURL:         "http://localhost:8888",
-	ConfigPansearchAuthOn:      "false",
-	ConfigPansearchCAMBlock:    "true",
-	ConfigPansearch4KPriority:  "true",
-	ConfigNASFullScanDay:       "1",
-	ConfigNASIncrementalDay:    "7",
-	ConfigWebSocketEnabled:     "true",
-	ConfigPanRenameEnabled:     "true",
-	ConfigNASEnabled:           "true",
-	ConfigResolveRateLimitMax:  "3",
-	ConfigResolveRateLimitSec:  "30",
-	ConfigMediaLibraryMaxRows:  "5000",
-	ConfigMediaLibraryKeepRows: "3000",
-	ConfigDemoVideoURL:         "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-	ConfigResolveDemoFallback:  "true",
-	ConfigResolveP0MinScore:    "0.6",
+	ConfigTMDBLanguage:           "zh-CN",
+	ConfigResolvePriority:        `["nas","pan115","quark","pan123","baidu","guangya"]`,
+	ConfigResolveMagnetEnabled:   "true",
+	ConfigResolveMagnetTarget:    "pan115",
+	ConfigPansearchURL:           "http://localhost:8888",
+	ConfigPansearchAuthOn:        "false",
+	ConfigPansearchCAMBlock:      "true",
+	ConfigPansearch4KPriority:    "true",
+	ConfigNASFullScanDay:         "1",
+	ConfigNASIncrementalDay:      "7",
+	ConfigWebSocketEnabled:       "true",
+	ConfigPanRenameEnabled:       "true",
+	ConfigNASEnabled:             "true",
+	ConfigResolveRateLimitMax:    "3",
+	ConfigResolveRateLimitSec:    "30",
+	ConfigMediaLibraryMaxRows:    "5000",
+	ConfigMediaLibraryKeepRows:   "3000",
+	ConfigDemoVideoURL:           "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+	ConfigResolveDemoFallback:    "true",
+	ConfigResolveP0MinScore:      "0.6",
+	ConfigSubscriptionSearchDays: "7",
 }
