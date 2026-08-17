@@ -161,7 +161,9 @@ func NewRouter(d Deps) http.Handler {
 		serverVersion:     d.ServerVersion,
 		serverStartedAt:   d.ServerStartedAt,
 		lastRestartReason: d.LastRestartReason,
-		nasSources:        d.NASSources,
+				nasSources:        d.NASSources,
+			}
+		h.log.Info("NAS sources wired (G1 admin 端点可用)")
 	}
 	if d.IndexEngine != nil {
 		h.indexAdmin = &indexAdminHandlers{engine: d.IndexEngine, index: d.MediaIndex}
