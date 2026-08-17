@@ -22,3 +22,11 @@ server/internal/**/hermes_*.go
 .DS_Store
 Thumbs.db
 *.log
+
+# Hermes ad-hoc 验证临时产物（不进入仓库，下一次跑会重新生成）
+/hc5-*.exe
+/hc5-*.db
+/hc5-*.db-shm
+/hc5-*.db-wal
+/srv*.err
+/srv*.out

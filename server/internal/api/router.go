@@ -106,19 +106,19 @@ type Handler struct {
 	notifications     *notification.Service
 	onSettingsUpdated func(map[string]string)
 	// X-MEDIA 播放器 API
-	tmdb            *tmdb.Service
-	media           *media.Service
-	resolveSvc      *resolve.Service
-	rateLimiter     *resolve.RateLimiter
-	streamProxy     *playback.StreamProxy
-	pansearch       *pansearch.Service
-	indexAdmin      *indexAdminHandlers
-	configAdmin     *configAdminHandlers
+	tmdb              *tmdb.Service
+	media             *media.Service
+	resolveSvc        *resolve.Service
+	rateLimiter       *resolve.RateLimiter
+	streamProxy       *playback.StreamProxy
+	pansearch         *pansearch.Service
+	indexAdmin        *indexAdminHandlers
+	configAdmin       *configAdminHandlers
 	hub               *websocket.Hub
 	configs           domain.ConfigRepository
 	mediaIndex        domain.MediaIndexRepository
-	serverVersion   string
-	serverStartedAt time.Time
+	serverVersion     string
+	serverStartedAt   time.Time
 	lastRestartReason string
 	// [V7 §9.4+ 扩展] NAS 媒体源仓储（G1.C：admin CRUD handler 用）。
 	nasSources domain.NASSourceRepository
@@ -161,8 +161,9 @@ func NewRouter(d Deps) http.Handler {
 		serverVersion:     d.ServerVersion,
 		serverStartedAt:   d.ServerStartedAt,
 		lastRestartReason: d.LastRestartReason,
-				nasSources:        d.NASSources,
-			}
+		nasSources:        d.NASSources,
+	}
+	if d.NASSources != nil {
 		h.log.Info("NAS sources wired (G1 admin 端点可用)")
 	}
 	if d.IndexEngine != nil {
@@ -286,19 +287,19 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/cleanup/{account_id}", h.indexAdmin.handleIndexCleanup)
 				})
 				r.Route("/configs", func(r chi.Router) {
-								r.Get("/", h.configAdmin.handleConfigsGet)
-								r.Put("/", h.configAdmin.handleConfigsPut)
-							})
-							// [V7 §9.4+ 扩展 G1.C] NAS 媒体源 CRUD 端点（[V7 §9.4+ 多源扩展]）
-							r.Route("/nas-sources", func(r chi.Router) {
-								r.Get("/", h.listNASSources)
-								r.Post("/", h.createNASSource)
-								r.Put("/{id}", h.updateNASSource)
-								r.Delete("/{id}", h.deleteNASSource)
-								r.Post("/{id}/toggle", h.toggleNASSource)
-								r.Get("/test-path", h.nasSourceTestPath)
-								r.Post("/bulk-health", h.nasSourceBulkHealth)
-							})
+					r.Get("/", h.configAdmin.handleConfigsGet)
+					r.Put("/", h.configAdmin.handleConfigsPut)
+				})
+				// [V7 §9.4+ 扩展 G1.C] NAS 媒体源 CRUD 端点（[V7 §9.4+ 多源扩展]）
+				r.Route("/nas-sources", func(r chi.Router) {
+					r.Get("/", h.listNASSources)
+					r.Post("/", h.createNASSource)
+					r.Put("/{id}", h.updateNASSource)
+					r.Delete("/{id}", h.deleteNASSource)
+					r.Post("/{id}/toggle", h.toggleNASSource)
+					r.Get("/test-path", h.nasSourceTestPath)
+					r.Post("/bulk-health", h.nasSourceBulkHealth)
+				})
 				// §1.4 Step 2：TMDB 配置专用端点（保存即测试 / 仅测试）
 				r.Put("/tmdb/config", h.tmdbAdminConfig)
 				r.Post("/tmdb/test", h.tmdbAdminTest)
