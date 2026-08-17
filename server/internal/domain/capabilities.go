@@ -13,6 +13,9 @@ type Capabilities struct {
 	NASProcessedFiles  int      `json:"nas_processed_files"`
 	NASTotalFiles      int      `json:"nas_total_files"`
 	NASScanning        bool     `json:"nas_scanning"`
+	// [V7 §9.4+ 扩展 G1.E] NAS source 总数：NASTotalSources / NASEnabledSources
+	NASTotalSources   int `json:"nas_total_sources"`
+	NASEnabledSources int `json:"nas_enabled_sources"`
 	// [v7 整改] P2 磁力下载是否启用
 	MagnetEnabled bool    `json:"magnet_enabled"`
 	P0MinScore    float64 `json:"p0_min_score"`

@@ -14,8 +14,16 @@ import {
   saveXMediaConfig,
   startNasScan,
   testTmdbKey,
+  fetchNASSources,
+  createNASSource as createNASSourceRequest,
+  toggleNASSource,
+  deleteNASSource,
+  testNASPath,
+  bulkNASHealth,
   type HealthStatus,
   type StateSnapshot,
+  type NASSource,
+  type NASTestPathResult,
 } from "@/api/xmedia";
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 import { toast } from "@/composables/useToast";
@@ -45,6 +53,16 @@ const snapshot = ref<StateSnapshot | null>(null);
 const health = ref<HealthStatus | null>(null);
 const configs = ref<Record<string, string>>({});
 const loading = ref(false);
+// [V7 §9.4+ 扩展 G1.C] NAS 媒体源 CRUD 状态
+const nasSources = ref<NASSource[]>([]);
+const nasLoading = ref(false);
+const nasCreating = ref(false);
+const nasBulkHealthBusy = ref(false);
+const nasTestingPath = ref(false);
+const nasBusyId = ref<number | null>(null);
+const nasNewName = ref("");
+const nasNewPath = ref("");
+const nasTestResult = ref<NASTestPathResult | null>(null);
 const savingKey = ref("");
 const testing = ref("");
 const scanning = ref(false);
@@ -59,19 +77,111 @@ let pollTimer: number | null = null;
 
 async function loadAll() {
   loading.value = true;
+  nasLoading.value = true;
   try {
-    const [snap, h, cfg] = await Promise.all([
+    const [snap, h, cfg, nasList] = await Promise.all([
       fetchSnapshot(),
       fetchHealth().catch(() => null),
       fetchXMediaConfigs().catch(() => ({})),
+      fetchNASSources().catch(() => []),
     ]);
     snapshot.value = snap;
     health.value = h;
     configs.value = cfg;
+    nasSources.value = nasList;
   } catch (e) {
     toast.error(getApiErrorMessage(e, "状态读取失败"));
   } finally {
     loading.value = false;
+    nasLoading.value = false;
+  }
+}
+
+// ===== [V7 §9.4+ 扩展 G1.C] NAS 媒体源 CRUD 操作 =====
+
+async function testNewPath() {
+  const path = nasNewPath.value.trim();
+  if (!path) return;
+  nasTestingPath.value = true;
+  nasTestResult.value = null;
+  try {
+    const result = await testNASPath(path);
+    nasTestResult.value = result;
+    if (result.exists && result.is_dir && result.readable) {
+      toast.success(`路径可读，浅层文件数 ${result.file_count}`);
+    } else if (!result.exists) {
+      toast.error("路径不存在");
+    } else if (!result.is_dir) {
+      toast.error("不是目录");
+    } else {
+      toast.error("无读取权限");
+    }
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "路径测试失败"));
+  } finally {
+    nasTestingPath.value = false;
+  }
+}
+
+async function createNASSource() {
+  const name = nasNewName.value.trim();
+  const path = nasNewPath.value.trim();
+  if (!name || !path) {
+    toast.error("名称和路径都不能为空");
+    return;
+  }
+  nasCreating.value = true;
+  try {
+    const src = await createNASSourceRequest({ name, path });
+    nasSources.value = [...nasSources.value, src];
+    nasNewName.value = "";
+    nasNewPath.value = "";
+    nasTestResult.value = null;
+    toast.success("已添加");
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "添加失败"));
+  } finally {
+    nasCreating.value = false;
+  }
+}
+
+async function toggleNAS(id: number) {
+  nasBusyId.value = id;
+  try {
+    const updated = await toggleNASSource(id);
+    nasSources.value = nasSources.value.map((s) => (s.id === id ? updated : s));
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "切换启用状态失败"));
+  } finally {
+    nasBusyId.value = null;
+  }
+}
+
+async function deleteNAS(id: number, name: string) {
+  if (!confirm(`确认删除 "${name}"？`)) return;
+  nasBusyId.value = id;
+  try {
+    await deleteNASSource(id);
+    nasSources.value = nasSources.value.filter((s) => s.id !== id);
+    toast.success("已删除");
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "删除失败"));
+  } finally {
+    nasBusyId.value = null;
+  }
+}
+
+async function runBulkHealth() {
+  nasBulkHealthBusy.value = true;
+  try {
+    await bulkNASHealth();
+    const list = await fetchNASSources();
+    nasSources.value = list;
+    toast.success("全部 NAS 源可访问性检测完成");
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "批量检测失败"));
+  } finally {
+    nasBulkHealthBusy.value = false;
   }
 }
 
@@ -111,19 +221,6 @@ async function testPansearch() {
     else toast.error(st?.message ?? "盘搜服务不可达");
   } catch (e) {
     toast.error(getApiErrorMessage(e, "盘搜测试失败"));
-  } finally {
-    testing.value = "";
-  }
-}
-
-async function testNasReadable() {
-  testing.value = "nas";
-  try {
-    await loadAll();
-    if (snapshot.value?.capabilities.nas_available) toast.success("NAS 路径可读，能力预检通过");
-    else toast.error("NAS 路径不可读，请检查路径与权限");
-  } catch (e) {
-    toast.error(getApiErrorMessage(e, "NAS 测试失败"));
   } finally {
     testing.value = "";
   }
@@ -291,24 +388,83 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === NAS_TAB">
-      <SettingsCard title="NAS 路径配置（Phase 8）" :loading="loading">
-        <SettingsRow label="本地媒体路径">
-          <AppInput v-model="configs.nas_local_path" placeholder="例如 D:\Media" class="config-input" />
-        </SettingsRow>
-        <SettingsRow label="操作">
-          <div class="row-actions">
-            <AppButton
-              type="button"
-              variant="primary"
-              :disabled="savingKey === 'nas'"
-              @click="saveConfig('nas_local_path', configs.nas_local_path ?? '', 'NAS 路径')"
-            >
-              保存
+      <SettingsCard title="NAS 媒体源（[V7 §9.4+ 扩展 G1.C]）" :loading="nasLoading">
+        <SettingsRow label="添加媒体源">
+          <div class="nas-add-row">
+            <AppInput v-model="nasNewName" placeholder="名称（可读标识）" class="config-input" />
+            <AppInput v-model="nasNewPath" placeholder="路径（容器内绝对路径，如 /mnt/nas-root/Asia-Movie）" class="config-input" />
+            <AppButton type="button" variant="primary" :disabled="nasCreating" @click="createNASSource">
+              {{ nasCreating ? "添加中…" : "添加" }}
             </AppButton>
-            <AppButton type="button" variant="ghost" :disabled="testing === 'nas'" @click="testNasReadable">
-              测试可读性
+            <AppButton type="button" variant="ghost" :disabled="!nasNewPath || nasTestingPath" @click="testNewPath">
+              {{ nasTestingPath ? "检测中…" : "测试路径" }}
             </AppButton>
           </div>
+          <div v-if="nasTestResult" class="nas-test-result" :class="nasTestResult.exists && nasTestResult.is_dir && nasTestResult.readable ? 'is-ok' : 'is-not_accessible'">
+            <span v-if="nasTestResult.exists && nasTestResult.is_dir && nasTestResult.readable">
+              ✅ 可读 · 浅层文件数 {{ nasTestResult.file_count }}
+              <span v-if="nasTestResult.sample && nasTestResult.sample.length"> · 子目录: {{ nasTestResult.sample.join(", ") }}</span>
+            </span>
+            <span v-else-if="!nasTestResult.exists">❌ 路径不存在</span>
+            <span v-else-if="!nasTestResult.is_dir">⚠ 不是目录</span>
+            <span v-else>⚠ 无读取权限</span>
+          </div>
+        </SettingsRow>
+
+        <SettingsRow label="媒体源列表">
+          <div v-if="nasSources.length === 0" class="nas-empty">
+            尚未配置 NAS 媒体源。在上方添加后点击"扫描"将进入索引引擎。
+          </div>
+          <table v-else class="nas-table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>路径</th>
+                <th>可访问</th>
+                <th>文件数</th>
+                <th>启用</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="src in nasSources" :key="src.id" :class="{ 'is-disabled': !src.enabled }">
+                <td>{{ src.name }}</td>
+                <td class="path-cell" :title="src.path">{{ src.path }}</td>
+                <td>
+                  <AdminStatusPill
+                    :status="src.last_accessibility === 'ok' ? 'ok' : src.last_accessibility === 'not_accessible' ? 'error' : 'pending'"
+                    :label="src.last_accessibility === 'ok' ? '可读' : src.last_accessibility === 'not_accessible' ? '不可读' : '未知'"
+                  />
+                </td>
+                <td>{{ src.file_count }}</td>
+                <td>
+                  <AppButton type="button" variant="ghost" :disabled="nasBusyId === src.id" @click="toggleNAS(src.id)">
+                    {{ src.enabled ? "已启用" : "已禁用" }}
+                  </AppButton>
+                </td>
+                <td class="actions-cell">
+                  <AppButton type="button" variant="ghost" :disabled="nasBusyId === src.id" @click="deleteNAS(src.id, src.name)">删除</AppButton>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </SettingsRow>
+
+        <SettingsRow label="扫描与健康检查">
+          <div class="row-actions">
+            <AppButton type="button" variant="primary" :disabled="scanning || nasSources.length === 0" @click="triggerScan('full')">
+              {{ scanning ? "扫描中…" : "全量扫描" }}
+            </AppButton>
+            <AppButton type="button" variant="ghost" :disabled="scanning || nasSources.length === 0" @click="triggerScan('incremental')">
+              增量扫描
+            </AppButton>
+            <AppButton type="button" variant="ghost" :disabled="nasBulkHealthBusy" @click="runBulkHealth">
+              {{ nasBulkHealthBusy ? "检测中…" : "全部可访问性检测" }}
+            </AppButton>
+          </div>
+          <p class="row-hint">
+            提示：NAS 媒体源独立启停；启用后才会参与扫描、P0 智能跳过命中、P1 转存候选。
+          </p>
         </SettingsRow>
       </SettingsCard>
     </div>
@@ -349,5 +505,70 @@ onUnmounted(() => {
 .settings-help {
   color: var(--color-text-secondary, #6b7280);
   font-size: 13px;
+}
+/* [V7 §9.4+ 扩展 G18] NAS 媒体源 CRUD 表格样式 */
+.nas-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.nas-add-row .config-input {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+.nas-test-result {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+}
+.nas-test-result.is-ok {
+  background: rgba(0, 200, 100, 0.12);
+  color: #047857;
+}
+.nas-test-result.is-not_accessible {
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+}
+.nas-test-result.is-unknown {
+  background: rgba(120, 120, 120, 0.08);
+  color: #4b5563;
+}
+.nas-empty {
+  padding: 12px;
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 13px;
+}
+.nas-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.nas-table th,
+.nas-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, rgba(0, 0, 0, 0.06));
+}
+.nas-table tr.is-disabled {
+  opacity: 0.55;
+}
+.nas-table .path-cell {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+}
+.nas-table .actions-cell {
+  display: flex;
+  gap: 6px;
+}
+.row-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-text-secondary, #6b7280);
 }
 </style>

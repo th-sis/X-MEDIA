@@ -43,6 +43,8 @@ type Service struct {
 	magnetEnabledFn func(ctx context.Context) bool
 	demoFallbackFn  func(ctx context.Context) bool
 	p0MinScoreFn    func(ctx context.Context) float64
+	nasPathsStat    func() map[string]bool
+	nasSourcesCount func() (int, int)
 	signer          *playback.TicketSigner
 	hub             *websocket.Hub
 	serverVersion   string
@@ -65,6 +67,11 @@ type Options struct {
 	IndexStatus func() (scanning bool, phase string, processed, total int)
 	// [V7 §9.4] NAS 路径列表（Capabilities 三态化用）
 	NASPathsKnown func() []string
+	// NASPathsStat 列出每条 source 的可访问性（Capabilities 用，¥7 §9.4+ 扩展 G1.E）。
+	// 返回的 map key = source path，value = 是否可访问（stat 探测）。
+	NASPathsStat func() map[string]bool
+	// NASSourcesCount 返回 (total, enabled) source 数（Capabilities 用）。
+	NASSourcesCount func() (total int, enabled int)
 	// [V7 §9.4] NAS 路径 stat 检测
 	PathStat        func(path string) bool
 	PansearchSearch func(ctx context.Context, req pansearch.SearchRequest) ([]domain.PanSearchResult, error)
@@ -100,6 +107,12 @@ func NewService(opts Options) *Service {
 	}
 	if opts.NASPathsKnown == nil {
 		opts.NASPathsKnown = func() []string { return nil }
+	}
+	if opts.NASPathsStat == nil {
+		opts.NASPathsStat = func() map[string]bool { return nil }
+	}
+	if opts.NASSourcesCount == nil {
+		opts.NASSourcesCount = func() (int, int) { return 0, 0 }
 	}
 	if opts.PathStat == nil {
 		opts.PathStat = func(string) bool { return false }
@@ -144,6 +157,8 @@ func NewService(opts Options) *Service {
 		loggedInDrivers: opts.LoggedInDrivers,
 		nasConfigured:   opts.NASConfigured,
 		indexCountFn:    opts.IndexCount,
+		nasPathsStat:    opts.NASPathsStat,
+		nasSourcesCount: opts.NASSourcesCount,
 		pansearchSearch: opts.PansearchSearch,
 		pansearchCheck:  opts.PansearchCheck,
 		driverGet:       opts.DriverGet,
@@ -336,6 +351,12 @@ func (s *Service) Result(ctx context.Context, taskID int64) (*domain.ResolveTask
 
 // Capabilities 计算能力预检结果。
 func (s *Service) Capabilities(ctx context.Context) domain.Capabilities {
+	// [V7 §9.4+ 扩展 G1.E] nil-safe：单测直接构造 s.Service{} 跳过 NewService 时
+	// nasSourcesCount 字段可能为 nil，回落零值防止 panic（不改外部行为）。
+	nasCountTotal, nasCountEnabled := 0, 0
+	if s.nasSourcesCount != nil {
+		nasCountTotal, nasCountEnabled = s.nasSourcesCount()
+	}
 	// [V7 §9.4 + §27.4] NAS 三态：
 	//   not_configured: 未配置路径或 nas_enabled=false
 	//   not_accessible: 配置了路径但路径不存在或无读权限
@@ -385,11 +406,13 @@ func (s *Service) Capabilities(ctx context.Context) domain.Capabilities {
 		NASPhase:           phase,
 		NASProcessedFiles:  processed,
 		NASTotalFiles:      total,
+		NASScanning:        scanning, // 暴露扫描状态供前端/audit
+		NASTotalSources:    nasCountTotal,
+		NASEnabledSources:  nasCountEnabled,
 		MagnetEnabled:      s.magnetEnabledFn(ctx),
 		P0MinScore:         s.p0MinScoreFn(ctx),
 		DemoFallback:       s.demoFallbackFn(ctx),
 		ServerVersion:      s.serverVersion,
-		NASScanning:        scanning, // 暴露扫描状态供前端/audit
 	}
 }
 

@@ -14,6 +14,7 @@ type Service struct {
 	mediaIndex domain.MediaIndexRepository
 	library    domain.MediaLibraryRepository
 	configs    domain.ConfigRepository
+	nasSources domain.NASSourceRepository
 	hub        *websocket.Hub
 
 	workerCount int
@@ -46,6 +47,7 @@ type Options struct {
 	MediaIndex   domain.MediaIndexRepository
 	MediaLibrary domain.MediaLibraryRepository
 	Configs      domain.ConfigRepository
+	NASSources   domain.NASSourceRepository
 	Hub          *websocket.Hub
 	WorkerCount  int
 }
@@ -59,6 +61,7 @@ func NewService(opts Options) *Service {
 		mediaIndex:  opts.MediaIndex,
 		library:     opts.MediaLibrary,
 		configs:     opts.Configs,
+		nasSources:  opts.NASSources,
 		hub:         opts.Hub,
 		workerCount: workers,
 	}
@@ -74,16 +77,46 @@ func (s *Service) NASPath(ctx context.Context) string {
 	return paths[0]
 }
 
-// NASPaths 读取所有 NAS 媒体源路径（V7 §9.7）。
-// 优先解析 nas_local_paths（JSON 数组）；为空回退到 nas_local_path 单字符串。
-// 详见 domain.ParseNASPaths()。
+// NASPaths 读取所有启用的 NAS 媒体源路径（[V7 §9.4+ 扩展] G1.H）。
+//
+// 优先级：
+//  1. 查 nas_sources 表 enabled=1 的 source 集合
+//  2. 表为空 → 回退到 configs KV（nas_local_paths → nas_local_path）
+//     此回退仅兼容迁移期遗留 KV；启动时 MigrateFromConfigsKV 会一次性清空
+//  3. 都为空 → 返回 nil
+//
+// 返回的列表可直接用于 filepath.WalkDir；调用方负责确认目录存在性。
 func (s *Service) NASPaths(ctx context.Context) []string {
+	if s.nasSources != nil {
+		sources, err := s.nasSources.ListEnabled(ctx)
+		if err == nil && len(sources) > 0 {
+			out := make([]string, 0, len(sources))
+			for _, src := range sources {
+				out = append(out, src.Path)
+			}
+			return out
+		}
+	}
+	// 回退：兼容迁移前残余 KV
 	if s.configs == nil {
 		return nil
 	}
 	newJSON, _, _ := s.configs.Get(ctx, domain.ConfigNASLocalPaths)
 	legacy, _, _ := s.configs.Get(ctx, domain.ConfigNASLocalPath)
 	return domain.ParseNASPaths(newJSON, legacy)
+}
+
+// ListEnabledSources 返回启用的 NAS source 完整元数据（用于 capabilities +
+// 多 path 进度汇报按 source 切分）。
+func (s *Service) ListEnabledSources(ctx context.Context) []*domain.NASSource {
+	if s.nasSources == nil {
+		return nil
+	}
+	list, err := s.nasSources.ListEnabled(ctx)
+	if err != nil {
+		return nil
+	}
+	return list
 }
 
 // IsScanning 当前是否有 NAS 扫描在跑（P0 智能跳过用，§6.3）。

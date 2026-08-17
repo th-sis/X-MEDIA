@@ -63,6 +63,7 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		MediaIndex:   st.store.MediaIndex,
 		MediaLibrary: st.store.MediaLibrary,
 		Configs:      st.store.Configs,
+		NASSources:   st.store.NASSources,
 		Hub:          hub,
 		WorkerCount:  8,
 	})
@@ -75,7 +76,7 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		MediaLibrary:    st.store.MediaLibrary,
 		PansearchHealth: pansearchSvc.Health,
 		LoggedInDrivers: loggedInDriversFn(svc.account),
-		NASConfigured:   nasConfiguredFn(st.store.Configs),
+		NASConfigured:   nasConfiguredFn(st.store.Configs, st.store.NASSources),
 		// [v7 整改] 智能跳过 P0：查询索引条数
 		IndexCount: func(ctx context.Context) (int, error) {
 			return st.store.MediaIndex.Count(ctx)
@@ -92,6 +93,30 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		// [V7 §9.4] NAS 路径列表（Capabilities 三态化用）
 		NASPathsKnown: func() []string {
 			return indexEngine.NASPaths(context.Background())
+		},
+		// [V7 §9.4+ 扩展 G1.E] Capabilities 聚合 source 总数
+		NASSourcesCount: func() (int, int) {
+			all, err := st.store.NASSources.List(context.Background())
+			if err != nil {
+				return 0, 0
+			}
+			total := len(all)
+			enabled := 0
+			for _, s := range all {
+				if s.Enabled {
+					enabled++
+				}
+			}
+			return total, enabled
+		},
+		NASPathsStat: func() map[string]bool {
+			paths := indexEngine.NASPaths(context.Background())
+			out := make(map[string]bool, len(paths))
+			for _, p := range paths {
+				info, err := os.Stat(p)
+				out[p] = err == nil && info.IsDir()
+			}
+			return out
 		},
 		// [V7 §9.4] NAS 路径 stat 检测（Capabilities not_accessible 检测）
 		PathStat: func(path string) bool {
@@ -121,11 +146,21 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 	winSec := configInt(st.store.Configs, domain.ConfigResolveRateLimitSec, 30)
 	rateLimiter := resolve.NewRateLimiter(st.store.RateLimits, maxReq, winSec)
 
+	// [V7 §9.4+ 扩展 Q2=A] 启动时一次性迁移 configs.nas_local_paths/legacy → nas_sources 表，
+	// 迁完后清空 KV，后续 NAS 路径读取一律走 DB 表（indexengine.NASPaths）。
+	// 失败仅日志，不阻塞启动（即便 KV 是坏的，DB 表该为空就空）。
+	go func() {
+		ctx := context.Background()
+		if err := st.store.MigrateFromConfigsKV(ctx); err != nil {
+			logs.Root().Warn("NAS KV→DB migration skipped", "err", err)
+		}
+	}()
+
 	// [V7 §28.1 步骤5] 启动后异步触发 NAS 首次全量扫描
 	// 仅当 NAS 已配置且启用时才启动；扫描中重复触发被忽略。
 	go func() {
 		ctx := context.Background()
-		if !nasConfiguredFn(st.store.Configs)(ctx) {
+		if !nasConfiguredFn(st.store.Configs, st.store.NASSources)(ctx) {
 			return
 		}
 		if err := indexEngine.ScanNASFull(ctx); err != nil {
@@ -222,8 +257,20 @@ func driverSourceName(driverType string) string {
 	}
 }
 
-func nasConfiguredFn(configs domain.ConfigRepository) func(ctx context.Context) bool {
+func nasConfiguredFn(configs domain.ConfigRepository, sources domain.NASSourceRepository) func(ctx context.Context) bool {
 	return func(ctx context.Context) bool {
+		// [V7 §9.4+ 扩展] DB 表优先：启用的 source 任一存在即视为已配置
+		if sources != nil {
+			list, err := sources.ListEnabled(ctx)
+			if err == nil && len(list) > 0 {
+				for _, s := range list {
+					if strings.TrimSpace(s.Path) != "" {
+						return true
+					}
+				}
+			}
+		}
+		// 回退：configs KV（仅迁移期可用，迁移后会清空）
 		if configs == nil {
 			return false
 		}
@@ -231,12 +278,23 @@ func nasConfiguredFn(configs domain.ConfigRepository) func(ctx context.Context) 
 		if v, ok, err := configs.Get(ctx, domain.ConfigNASEnabled); err == nil && ok && strings.TrimSpace(v) != "" {
 			enabled = v == "true" || v == "1"
 		}
-		path := ""
-		if v, ok, err := configs.Get(ctx, domain.ConfigNASLocalPath); err == nil && ok {
-			path = v
-		}
-		return enabled && strings.TrimSpace(path) != ""
+		paths := configsGetPaths(ctx, configs)
+		return enabled && len(paths) > 0
 	}
+}
+
+// configsGetPaths 从 KV 读取新旧两种配置的路径集合（统一封装，复用回退场景）。
+func configsGetPaths(ctx context.Context, configs domain.ConfigRepository) []string {
+	newJSON, newOK, _ := configs.Get(ctx, domain.ConfigNASLocalPaths)
+	legacy, legacyOK, _ := configs.Get(ctx, domain.ConfigNASLocalPath)
+	var newVal, legacyVal string
+	if newOK {
+		newVal = newJSON
+	}
+	if legacyOK {
+		legacyVal = legacy
+	}
+	return domain.ParseNASPaths(newVal, legacyVal)
 }
 
 func configInt(configs domain.ConfigRepository, key string, def int) int {

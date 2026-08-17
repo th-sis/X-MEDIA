@@ -84,3 +84,60 @@ export async function testTmdbKey(): Promise<{ item_count: number }> {
   const body = (await resp.json()) as { items?: unknown[]; total?: number };
   return { item_count: body.items?.length ?? 0 };
 }
+
+// ===== [V7 §9.4+ 扩展 G1.C/G18] NAS 媒体源 CRUD =====
+
+export interface NASSource {
+  id: number;
+  name: string;
+  path: string;
+  enabled: boolean;
+  file_count: number;
+  last_accessibility: "ok" | "not_accessible" | "unknown";
+  last_checked_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NASTestPathResult {
+  path: string;
+  exists: boolean;
+  is_dir: boolean;
+  readable?: boolean;
+  file_count: number;
+  sample?: string[];
+}
+
+export interface NASBulkHealth {
+  checked: number;
+  results: Array<{
+    id: number;
+    name: string;
+    path: string;
+    status: string;
+    count: number;
+    persisted: boolean;
+  }>;
+}
+
+export function fetchNASSources(): Promise<NASSource[]> {
+  return http.get<NASSource[]>("/admin/nas-sources/");
+}
+export function createNASSource(payload: { name: string; path: string; enabled?: boolean }): Promise<NASSource> {
+  return http.post<NASSource>("/admin/nas-sources/", payload);
+}
+export function updateNASSource(id: number, payload: { name?: string; path?: string; enabled?: boolean }): Promise<NASSource> {
+  return http.put<NASSource>(`/admin/nas-sources/${id}`, payload);
+}
+export function deleteNASSource(id: number): Promise<{ deleted: number }> {
+  return http.del<{ deleted: number }>(`/admin/nas-sources/${id}`);
+}
+export function toggleNASSource(id: number): Promise<NASSource> {
+  return http.post<NASSource>(`/admin/nas-sources/${id}/toggle`, {});
+}
+export function testNASPath(path: string): Promise<NASTestPathResult> {
+  return http.get<NASTestPathResult>("/admin/nas-sources/test-path", { path });
+}
+export function bulkNASHealth(): Promise<NASBulkHealth> {
+  return http.post<NASBulkHealth>("/admin/nas-sources/bulk-health", {});
+}

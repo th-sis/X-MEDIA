@@ -81,6 +81,8 @@ type Deps struct {
 	ServerStartedAt time.Time
 	// LastRestartReason V7 §28.3：客户端感知重启（graceful/config_change/oom/panic）。
 	LastRestartReason string
+	// [V7 §9.4+ 扩展] NAS 媒体源仓储（G1.C：admin CRUD handler 用）。
+	NASSources domain.NASSourceRepository
 }
 
 // Handler 持有处理请求所需的依赖。
@@ -118,6 +120,8 @@ type Handler struct {
 	serverVersion   string
 	serverStartedAt time.Time
 	lastRestartReason string
+	// [V7 §9.4+ 扩展] NAS 媒体源仓储（G1.C：admin CRUD handler 用）。
+	nasSources domain.NASSourceRepository
 }
 
 // NewRouter 装配并返回 HTTP 路由（含内嵌管理页面）。
@@ -157,6 +161,7 @@ func NewRouter(d Deps) http.Handler {
 		serverVersion:     d.ServerVersion,
 		serverStartedAt:   d.ServerStartedAt,
 		lastRestartReason: d.LastRestartReason,
+		nasSources:        d.NASSources,
 	}
 	if d.IndexEngine != nil {
 		h.indexAdmin = &indexAdminHandlers{engine: d.IndexEngine, index: d.MediaIndex}
@@ -279,9 +284,19 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/cleanup/{account_id}", h.indexAdmin.handleIndexCleanup)
 				})
 				r.Route("/configs", func(r chi.Router) {
-					r.Get("/", h.configAdmin.handleConfigsGet)
-					r.Put("/", h.configAdmin.handleConfigsPut)
-				})
+								r.Get("/", h.configAdmin.handleConfigsGet)
+								r.Put("/", h.configAdmin.handleConfigsPut)
+							})
+							// [V7 §9.4+ 扩展 G1.C] NAS 媒体源 CRUD 端点（[V7 §9.4+ 多源扩展]）
+							r.Route("/nas-sources", func(r chi.Router) {
+								r.Get("/", h.listNASSources)
+								r.Post("/", h.createNASSource)
+								r.Put("/{id}", h.updateNASSource)
+								r.Delete("/{id}", h.deleteNASSource)
+								r.Post("/{id}/toggle", h.toggleNASSource)
+								r.Get("/test-path", h.nasSourceTestPath)
+								r.Post("/bulk-health", h.nasSourceBulkHealth)
+							})
 				// §1.4 Step 2：TMDB 配置专用端点（保存即测试 / 仅测试）
 				r.Put("/tmdb/config", h.tmdbAdminConfig)
 				r.Post("/tmdb/test", h.tmdbAdminTest)

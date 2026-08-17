@@ -23,6 +23,7 @@ type Store struct {
 	ResolveTasks        domain.ResolveTaskRepository
 	SearchHistory       domain.SearchHistoryRepository
 	RateLimits          domain.RateLimitRepository
+	NASSources          domain.NASSourceRepository
 }
 
 // New 基于已打开的 DB 构造仓储集合。
@@ -48,5 +49,6 @@ func New(db *DB) *Store {
 		ResolveTasks:        &resolveTaskRepo{db: db},
 		SearchHistory:       &searchHistoryRepo{db: db},
 		RateLimits:          &rateLimitRepo{db: db},
+		NASSources:          &nasSourceRepo{db: db},
 	}
 }
