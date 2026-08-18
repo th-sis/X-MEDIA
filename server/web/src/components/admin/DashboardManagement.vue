@@ -65,6 +65,9 @@ void (0 as unknown as OverviewResult);
 
 const accountCount = computed(() => accounts.value.length);
 const activeAccountCount = computed(() => accounts.value.filter((account) => account.is_active).length);
+// V7 §27.1:网盘在线 = snapshot.logged_in_drivers 实时长度 (oauth/cookie refresh 通过)
+// 与 is_active 不同 — 网盘启用是后台勾选, 网盘在线是认证实时状态
+const loggedInDriverCount = computed(() => loggedInDrivers.value.length);
 const inactiveAccountCount = computed(() => Math.max(0, accountCount.value - activeAccountCount.value));
 const authErrorAccountCount = computed(() => accounts.value.filter((account) => isAccountAuthError(account)).length);
 const cooldownAccountCount = computed(() => accounts.value.filter((account) => isAccountCooldown(account)).length);
@@ -447,13 +450,14 @@ onMounted(() => {
           </div>
         </div>
         <div class="dashboard-hero__metrics" aria-label="运行概况指标">
+          <!-- V7 整改：接入/在线 → 网盘接入/网盘在线；在线改为 snapshot 实时认证状态（logged_in_drivers） -->
           <div class="hero-metric">
             <strong>{{ accountCount }}</strong>
-            <span>接入</span>
+            <span>网盘接入</span>
           </div>
           <div class="hero-metric is-green">
-            <strong>{{ activeAccountCount }}</strong>
-            <span>在线</span>
+            <strong>{{ loggedInDriverCount }}</strong>
+            <span>网盘在线</span>
           </div>
           <div class="hero-metric">
             <strong>{{ enabledTaskCount }}</strong>
@@ -555,7 +559,8 @@ onMounted(() => {
           <header class="dashboard-panel__head">
             <div>
               <h3>存储账号</h3>
-              <p>{{ accountCount }} 个接入 · {{ activeAccountCount }} 个在线</p>
+              <!-- V7 整改：与 hero-metric 一致, 网盘接入/网盘在线 -->
+              <p>{{ accountCount }} 个网盘接入 · {{ loggedInDriverCount }} 个网盘在线</p>
             </div>
             <button type="button" class="dashboard-link-button" :disabled="refreshing" @click="loadOverview">
               <i class="fas fa-rotate-right" :class="{ 'is-spinning': refreshing }" />
