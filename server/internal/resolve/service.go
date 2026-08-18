@@ -157,6 +157,8 @@ func NewService(opts Options) *Service {
 		loggedInDrivers: opts.LoggedInDrivers,
 		nasConfigured:   opts.NASConfigured,
 		indexCountFn:    opts.IndexCount,
+		indexScanningFn: opts.IndexScanning,
+		indexStatusFn:   opts.IndexStatus,
 		nasPathsStat:    opts.NASPathsStat,
 		nasSourcesCount: opts.NASSourcesCount,
 		pansearchSearch: opts.PansearchSearch,
@@ -386,10 +388,13 @@ func (s *Service) Capabilities(ctx context.Context) domain.Capabilities {
 		}
 	}
 
-	// 索引完整/计数：取 indexStatus 真实状态
+	// 索引完整/计数：取 indexStatus 真实状态(nil-safe:C4 三态化时漏填字段,Capabilities 调用此 path 会 panic)
+	scanning, phase, processed, total := false, "", 0, 0
 	indexComplete := false
 	cnt := 0
-	scanning, phase, processed, total := s.indexStatusFn()
+	if s.indexStatusFn != nil {
+		scanning, phase, processed, total = s.indexStatusFn()
+	}
 	if s.mediaIndex != nil {
 		if n, err := s.mediaIndex.Count(ctx); err == nil && n > 0 {
 			indexComplete = true
