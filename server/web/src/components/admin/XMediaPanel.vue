@@ -78,17 +78,22 @@ let pollTimer: number | null = null;
 async function loadAll() {
   loading.value = true;
   nasLoading.value = true;
+  // [V7 整改 E3] fetchSnapshot 必须自带 .catch(null) —— 否则任何 /api/state/snapshot
+  // 500 都让整页 reject, 其它 tab 跟着 "请求失败 (500)" 假象拖垮 (Promise.all 短路语义)。
+  // 正确做法: 每个 promise 各自 catch 返回零值, 这里只用 Promise.all 拿顺序, 不让它 reject。
+  // 对比: DashboardManagement.vue 用 Promise.allSettled 走同条接口, 没有这个 bug。
   try {
     const [snap, h, cfg, nasList] = await Promise.all([
-      fetchSnapshot(),
+      fetchSnapshot().catch(() => null),
       fetchHealth().catch(() => null),
       fetchXMediaConfigs().catch(() => ({})),
       fetchNASSources().catch(() => []),
     ]);
-    snapshot.value = snap;
-    health.value = h;
-    configs.value = cfg;
-    nasSources.value = nasList;
+    // null-safe 赋值: 任一接口失败时不污染其它状态
+    if (snap) snapshot.value = snap;
+    if (h) health.value = h;
+    if (cfg) configs.value = cfg;
+    if (nasList) nasSources.value = nasList;
   } catch (e) {
     toast.error(getApiErrorMessage(e, "状态读取失败"));
   } finally {
