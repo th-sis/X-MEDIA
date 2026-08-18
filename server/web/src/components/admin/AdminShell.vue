@@ -138,11 +138,17 @@ onBeforeUnmount(() => {
 
     <aside class="sidebar">
       <header class="sidebar__header">
-        <img
-          :src="sidebarCompact ? '/static/img/logo-l.png' : '/static/img/logo.png'"
-          alt="LitePan"
-          class="sidebar__logo"
-        />
+        <picture>
+          <source
+            media="(prefers-color-scheme: dark)"
+            :srcset="sidebarCompact ? '/static/img/logo-l-dark.png' : '/static/img/logo-dark.png'"
+          />
+          <img
+            :src="sidebarCompact ? '/static/img/logo-l.png' : '/static/img/logo.png'"
+            alt="X-MEDIA"
+            class="sidebar__logo"
+          />
+        </picture>
       </header>
 
       <nav class="sidebar__nav">

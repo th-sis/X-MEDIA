@@ -131,7 +131,11 @@ onMounted(async () => {
   <div class="login-container">
     <div class="left-panel">
       <div class="brand-row">
-        <img src="/static/img/logo.png" alt="LitePan" class="brand-logo" />
+        <!-- V7 logo 自适应: prefers-color-scheme 自动切换 light/dark 变体 -->
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/static/img/logo-dark.png" />
+          <img src="/static/img/logo.png" alt="X-MEDIA" class="brand-logo" />
+        </picture>
       </div>
       <div class="characters-area">
         <AnimatedCharacters

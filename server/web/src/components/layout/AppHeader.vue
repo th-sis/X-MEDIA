@@ -335,7 +335,10 @@ onMounted(async () => {
     </div>
     <div class="header__inner container">
       <RouterLink to="/" class="header__brand">
-        <img src="/static/img/logo.png" alt="LitePan" class="header__logo" />
+        <picture>
+          <source media="(prefers-color-scheme: dark)" srcset="/static/img/logo-dark.png" />
+          <img src="/static/img/logo.png" alt="X-MEDIA" class="header__logo" />
+        </picture>
       </RouterLink>
 
       <nav class="header__nav">
