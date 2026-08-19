@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -10,6 +11,54 @@ import (
 
 	"xmedia/internal/domain"
 )
+
+// [V7 整改 commit #4] NAS 主机路径 -> 容器路径 自动映射。
+//
+// 用户在管理后台填主机路径（/mnt/BTORAGE/Asia-Movie），
+// 后端自动 prefix rewrite 成容器内路径（/mnt/nas-root/Asia-Movie），
+// 然后存到 nas_sources.path（容器内路径是真相源）。
+//
+// 映射规则来源（优先级）：
+//  1. 用户手动配置（configs 表 nas_mount_* KV）
+//  2. 自动探测（/proc/self/mountinfo 启动快照）
+//  3. 原样返回（假设用户已直接填容器内路径）
+
+// nasMountResolver 持有 mount 映射 + 探测快照，给 handler 用。
+// 启动时构造一次，handler 每次请求复用（性能）。
+type nasMountResolver struct {
+	// mounts 用户在 configs 表配置的 host_path -> container_path 映射。
+	mounts domain.NASMountMap
+	// detected 启动时 /proc/self/mountinfo 探测结果。
+	detected []domain.MountInfoEntry
+}
+
+// newNASMountResolver 构造 resolver：探测 mountinfo + 读 configs mount map。
+// 若探测失败（裸机部署无 /proc/self/mountinfo），返回 resolver + nil error，
+// detected 留空 —— rewrite 仍可走 mounted 配置。
+func newNASMountResolver(configs domain.ConfigRepository) *nasMountResolver {
+	r := &nasMountResolver{
+		mounts: domain.NASMountMap{},
+	}
+	if configs != nil {
+		if all, err := configs.All(context.Background()); err == nil {
+			r.mounts = domain.LoadNASMountMap(all)
+		}
+	}
+	if detected, err := domain.ProbeNASMounts(); err == nil {
+		r.detected = detected
+	}
+	return r
+}
+
+// resolve 把用户填的路径 rewrite 成容器内路径。返回 rewrite 后的字符串。
+// rewrite 失败（empty）时返回原值。
+func (r *nasMountResolver) resolve(rawPath string) string {
+	if rawPath == "" {
+		return rawPath
+	}
+	resolved, _ := domain.ResolveNASPath(rawPath, r.mounts, r.detected)
+	return resolved
+}
 
 // nasSourceView 是返回给前端的展示态（[V7 §9.4+ 扩展] G1.C，G18 UI 用）。
 type nasSourceView struct {
@@ -76,14 +125,21 @@ func (h *Handler) createNASSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(body.Name)
-	path := strings.TrimSpace(body.Path)
+	rawPath := strings.TrimSpace(body.Path)
 	if name == "" {
 		writeErr(w, domain.Errorf(domain.CodeValidation, "name 不能为空"))
 		return
 	}
-	if !isAbsolutePath(path) {
+	if !isAbsolutePath(rawPath) {
 		writeErr(w, domain.Errorf(domain.CodeValidation, "path 必须是绝对路径"))
 		return
+	}
+	// [V7 改造 commit #4] 主机路径 -> 容器路径自动 rewrite。
+	// 用户在管理后台填主机路径（/mnt/BTORAGE/Asia-Movie），
+	// 后端根据 configs 表映射 + /proc/self/mountinfo 自动转容器内路径。
+	path := rawPath
+	if h.nasMountResolver != nil {
+		path = h.nasMountResolver.resolve(rawPath)
 	}
 	if taken, err := repo.NameTaken(r.Context(), name, 0); err != nil {
 		writeErr(w, err)
@@ -154,10 +210,15 @@ func (h *Handler) updateNASSource(w http.ResponseWriter, r *http.Request) {
 		cur.Name = newName
 	}
 	if body.Path != nil {
-		newPath := strings.TrimSpace(*body.Path)
-		if !isAbsolutePath(newPath) {
+		rawPath := strings.TrimSpace(*body.Path)
+		if !isAbsolutePath(rawPath) {
 			writeErr(w, domain.Errorf(domain.CodeValidation, "path 必须是绝对路径"))
 			return
+		}
+		// [V7 改造 commit #4] 主机路径 -> 容器路径自动 rewrite.
+		newPath := rawPath
+		if h.nasMountResolver != nil {
+			newPath = h.nasMountResolver.resolve(rawPath)
 		}
 		if taken, err := repo.PathTaken(r.Context(), newPath, id); err != nil {
 			writeErr(w, err)
@@ -229,14 +290,19 @@ func (h *Handler) toggleNASSource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) nasSourceTestPath(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimSpace(r.URL.Query().Get("path"))
-	if path == "" {
+	rawPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if rawPath == "" {
 		writeErr(w, domain.Errorf(domain.CodeValidation, "path 必须提供"))
 		return
 	}
-	if !isAbsolutePath(path) {
+	if !isAbsolutePath(rawPath) {
 		writeErr(w, domain.Errorf(domain.CodeValidation, "path 必须是绝对路径"))
 		return
+	}
+	// [V7 改造 commit #4] 使得用户在测试页填主机路径也能正确校验。
+	path := rawPath
+	if h.nasMountResolver != nil {
+		path = h.nasMountResolver.resolve(rawPath)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -324,6 +390,8 @@ func (h *Handler) nasSourceBulkHealth(w http.ResponseWriter, r *http.Request) {
 	for _, src := range list {
 		acc := domain.NASAccessibilityNotAccessible
 		count := int64(0)
+		// [V7 改造 commit #4] src.Path 已是容器内路径 (创建/更新时已 rewrite),
+		// 这里直接 os.Stat 。
 		if info, statErr := os.Stat(src.Path); statErr == nil && info.IsDir() {
 			if entries, readErr := os.ReadDir(src.Path); readErr == nil {
 				acc = domain.NASAccessibilityOK

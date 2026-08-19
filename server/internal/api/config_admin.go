@@ -54,6 +54,8 @@ func allowedConfigKey(key string) bool {
 		domain.ConfigKeyPrefixPanQuotaWarn,
 		domain.ConfigKeyPrefixPanCleanupMode,
 		domain.ConfigKeyPrefixPanCleanupKeep,
+		// [V7 整改 commit #4] NAS mount map: nas_mount_<host_path> -> container_path
+		domain.ConfigKeyPrefixNASMount,
 	} {
 		if len(key) > len(prefix) && key[:len(prefix)] == prefix {
 			return true

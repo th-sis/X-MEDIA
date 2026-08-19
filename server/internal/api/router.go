@@ -122,6 +122,11 @@ type Handler struct {
 	lastRestartReason string
 	// [V7 §9.4+ 扩展] NAS 媒体源仓储（G1.C：admin CRUD handler 用）。
 	nasSources domain.NASSourceRepository
+	// [V7 整改 commit #4] NAS 主机路径 -> 容器路径 自动映射 resolver。
+	// 启动时根据 configs + /proc/self/mountinfo 构造一次。
+	nasMountResolver *nasMountResolver
+	// [V7 整改 commit #4] NAS mount mapper admin endpoints.
+	nasMountAdmin *nasMountAdminHandlers
 }
 
 // NewRouter 装配并返回 HTTP 路由（含内嵌管理页面）。
@@ -162,6 +167,13 @@ func NewRouter(d Deps) http.Handler {
 		serverStartedAt:   d.ServerStartedAt,
 		lastRestartReason: d.LastRestartReason,
 		nasSources:        d.NASSources,
+		nasMountResolver: newNASMountResolver(d.Configs),
+	}
+	// [V7 改造 commit #4] 启动时探测 NAS mount, 日志记录便于运维核对 bind mount 是否成功。
+	if detected, _ := domain.ProbeNASMounts(); len(detected) > 0 {
+		for _, m := range detected {
+			h.log.Info("NAS auto-detected mount", "fs", m.Filesystem, "target", m.MountTarget, "source", m.Source)
+		}
 	}
 	if d.NASSources != nil {
 		h.log.Info("NAS sources wired (G1 admin 端点可用)")
@@ -170,6 +182,8 @@ func NewRouter(d Deps) http.Handler {
 		h.indexAdmin = &indexAdminHandlers{engine: d.IndexEngine, index: d.MediaIndex}
 	}
 	h.configAdmin = &configAdminHandlers{configs: d.Configs, bus: d.Bus}
+	// [V7 整改 commit #4] NAS mount admin endpoints.
+	h.nasMountAdmin = &nasMountAdminHandlers{configs: d.Configs, resolver: h.nasMountResolver}
 
 	r := chi.NewRouter()
 	r.Use(trackResponseCommit)
@@ -300,6 +314,17 @@ func NewRouter(d Deps) http.Handler {
 					r.Get("/test-path", h.nasSourceTestPath)
 					r.Post("/bulk-health", h.nasSourceBulkHealth)
 				})
+			// [V7 整改 commit #4] NAS 主机路径 -> 容器路径 映射管理端点.
+			if h.nasMountAdmin != nil {
+				r.Route("/nas-mounts", func(r chi.Router) {
+					r.Get("/", h.nasMountAdmin.handleNASMountsList)
+					r.Post("/", h.nasMountAdmin.handleNASMountsCreate)
+					r.Post("/probe", h.nasMountAdmin.handleNASMountsProbe)
+					r.Post("/resolve", h.nasMountAdmin.handleNASMountsResolve)
+					r.Put("/{host_path}", h.nasMountAdmin.handleNASMountsUpdate)
+					r.Delete("/{host_path}", h.nasMountAdmin.handleNASMountsDelete)
+				})
+			}
 				// §1.4 Step 2：TMDB 配置专用端点（保存即测试 / 仅测试）
 				r.Put("/tmdb/config", h.tmdbAdminConfig)
 				r.Post("/tmdb/test", h.tmdbAdminTest)
