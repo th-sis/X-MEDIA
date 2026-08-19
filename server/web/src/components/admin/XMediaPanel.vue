@@ -232,14 +232,18 @@ async function testPansearch() {
 }
 
 async function triggerScan(mode: "full" | "incremental") {
+  // [V7 整改 commit #5] NAS 扫描按钮 feedback 改进:
+  // 1. 启动后立即 fetchSnapshot, 让 UI 立即看到 scanning=true
+  // 2. 延迟 2 秒重置 scanning, 避免连击
   scanning.value = true;
   try {
     await startNasScan(mode);
     toast.success(mode === "full" ? "全量扫描已启动" : "增量扫描已启动");
+    fetchSnapshot().then((s) => { if (s) snapshot.value = s; }).catch(() => undefined);
   } catch (e) {
     toast.error(getApiErrorMessage(e, "扫描启动失败"));
   } finally {
-    scanning.value = false;
+    window.setTimeout(() => { scanning.value = false; }, 2000);
   }
 }
 
@@ -333,10 +337,10 @@ onUnmounted(() => {
         <SettingsRow label="操作">
           <div class="row-actions">
             <AppButton type="button" variant="primary" :disabled="scanning" @click="triggerScan('full')">
-              全量扫描
+              {{ scanning ? "扫描中…" : "全量扫描" }}
             </AppButton>
             <AppButton type="button" variant="ghost" :disabled="scanning" @click="triggerScan('incremental')">
-              增量扫描
+              {{ scanning ? "扫描中…" : "增量扫描" }}
             </AppButton>
           </div>
         </SettingsRow>
@@ -457,17 +461,20 @@ onUnmounted(() => {
 
         <SettingsRow label="扫描与健康检查">
           <div class="row-actions">
-            <AppButton type="button" variant="primary" :disabled="scanning || nasSources.length === 0" @click="triggerScan('full')">
+            <AppButton type="button" variant="primary" :disabled="scanning" @click="triggerScan('full')">
               {{ scanning ? "扫描中…" : "全量扫描" }}
             </AppButton>
-            <AppButton type="button" variant="ghost" :disabled="scanning || nasSources.length === 0" @click="triggerScan('incremental')">
-              增量扫描
+            <AppButton type="button" variant="ghost" :disabled="scanning" @click="triggerScan('incremental')">
+              {{ scanning ? "扫描中…" : "增量扫描" }}
             </AppButton>
             <AppButton type="button" variant="ghost" :disabled="nasBulkHealthBusy" @click="runBulkHealth">
               {{ nasBulkHealthBusy ? "检测中…" : "全部可访问性检测" }}
             </AppButton>
           </div>
-          <p class="row-hint">
+          <p class="row-hint" v-if="nasSources.length === 0">
+            ⚠ 当前没有 NAS 媒体源。请先在上方表单添加主机路径（后端会自动映射到容器内路径）后再点击扫描。
+          </p>
+          <p class="row-hint" v-else>
             提示：NAS 媒体源独立启停；启用后才会参与扫描、P0 智能跳过命中、P1 转存候选。
           </p>
         </SettingsRow>
