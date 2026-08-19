@@ -283,13 +283,21 @@ onBeforeUnmount(() => {
 }
 
 .sidebar__logo {
+  width: 128px;
+  height: 52px;
   max-width: 128px;
   max-height: 52px;
-  width: auto;
-  height: auto;
   object-fit: contain;
   object-position: center;
+  display: block;
   transition: max-width 0.2s ease, max-height 0.2s ease;
+}
+.sidebar__logo,
+.sidebar__logo img {
+  width: 128px;
+  height: 52px;
+  max-width: 128px;
+  max-height: 52px;
 }
 
 .sidebar__nav {
@@ -372,6 +380,14 @@ onBeforeUnmount(() => {
 .nav-item__icon {
   margin-right: 24px;
   flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+.nav-item__icon svg {
+  width: 24px;
+  height: 24px;
+  display: block;
 }
 
 .nav-item__label {
