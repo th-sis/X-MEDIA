@@ -20,10 +20,17 @@ import {
   deleteNASSource,
   testNASPath,
   bulkNASHealth,
+  fetchNASMounts,
+  deleteNASMount,
+  probeNASMounts,
+  resolveNASPath,
   type HealthStatus,
   type StateSnapshot,
   type NASSource,
   type NASTestPathResult,
+  type NASMount,
+  type NASDetectedMount,
+  type NASResolveResult,
 } from "@/api/xmedia";
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 import { toast } from "@/composables/useToast";
@@ -63,6 +70,16 @@ const nasBusyId = ref<number | null>(null);
 const nasNewName = ref("");
 const nasNewPath = ref("");
 const nasTestResult = ref<NASTestPathResult | null>(null);
+// [V7 §9.4+ 扩展 G18] NAS 主机路径 → 容器路径 映射管理状态
+const nasMounts = ref<NASMount[]>([]);
+const nasDetected = ref<NASDetectedMount[]>([]);
+const nasMountsLoading = ref(false);
+const nasProbeBusy = ref(false);
+const nasDeleteMountBusy = ref<string | null>(null);
+// 实时预览：用户在 nasNewPath 输入时，debounce 300ms 调一次 resolve
+const nasResolvePreview = ref<NASResolveResult | null>(null);
+const nasResolveBusy = ref(false);
+let nasResolveTimer: number | null = null;
 const savingKey = ref("");
 const testing = ref("");
 const scanning = ref(false);
@@ -83,17 +100,24 @@ async function loadAll() {
   // 正确做法: 每个 promise 各自 catch 返回零值, 这里只用 Promise.all 拿顺序, 不让它 reject。
   // 对比: DashboardManagement.vue 用 Promise.allSettled 走同条接口, 没有这个 bug。
   try {
-    const [snap, h, cfg, nasList] = await Promise.all([
+    const [snap, h, cfg, nasList, mountsView] = await Promise.all([
       fetchSnapshot().catch(() => null),
       fetchHealth().catch(() => null),
       fetchXMediaConfigs().catch(() => ({})),
       fetchNASSources().catch(() => []),
+      // [V7 §9.4+ 扩展 G18] mount map 拉取（容错，失败不阻塞主流程）
+      fetchNASMounts().catch(() => null),
     ]);
     // null-safe 赋值: 任一接口失败时不污染其它状态
     if (snap) snapshot.value = snap;
     if (h) health.value = h;
     if (cfg) configs.value = cfg;
     if (nasList) nasSources.value = nasList;
+    if (mountsView) {
+      // 服务端无 configured 字段时容错
+      nasMounts.value = mountsView.configured ?? [];
+      nasDetected.value = mountsView.detected ?? [];
+    }
   } catch (e) {
     toast.error(getApiErrorMessage(e, "状态读取失败"));
   } finally {
@@ -190,6 +214,73 @@ async function runBulkHealth() {
   }
 }
 
+// ===== [V7 §9.4+ 扩展 G18] NAS 主机路径 → 容器路径 映射操作 =====
+
+async function probeNASMountsNow() {
+  nasProbeBusy.value = true;
+  try {
+    const res = await probeNASMounts();
+    nasDetected.value = res.detected ?? [];
+    toast.success(`已重新探测 ${res.count} 个挂载点`);
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "重新探测失败"));
+  } finally {
+    nasProbeBusy.value = false;
+  }
+}
+
+async function deleteNASMountByHost(hostPath: string) {
+  if (!confirm(`确认删除主机路径映射 "${hostPath}"？`)) return;
+  nasDeleteMountBusy.value = hostPath;
+  try {
+    await deleteNASMount(hostPath);
+    nasMounts.value = nasMounts.value.filter((m) => m.host_path !== hostPath);
+    toast.success("已删除映射");
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "删除映射失败"));
+  } finally {
+    nasDeleteMountBusy.value = null;
+  }
+}
+
+// 实时预览：用户输入 nasNewPath 时 debounce 300ms 调一次 resolve
+function scheduleResolvePreview() {
+  if (nasResolveTimer !== null) {
+    window.clearTimeout(nasResolveTimer);
+  }
+  const path = nasNewPath.value.trim();
+  if (!path) {
+    nasResolvePreview.value = null;
+    nasResolveBusy.value = false;
+    return;
+  }
+  nasResolveBusy.value = true;
+  nasResolveTimer = window.setTimeout(async () => {
+    try {
+      const res = await resolveNASPath(path);
+      // 防止 debounce 期间用户又改输入：用最新的 nasNewPath 比对
+      if (nasNewPath.value.trim() === path) {
+        nasResolvePreview.value = res;
+      }
+    } catch {
+      // 失败静默——预览是辅助，不弹错
+      if (nasNewPath.value.trim() === path) {
+        nasResolvePreview.value = null;
+      }
+    } finally {
+      if (nasNewPath.value.trim() === path) {
+        nasResolveBusy.value = false;
+      }
+    }
+  }, 300);
+}
+
+function sourceLabel(source: NASResolveResult["source"] | undefined): string {
+  if (source === "explicit") return "手动映射";
+  if (source === "auto_detected") return "自动探测";
+  return "原样透传";
+}
+
 async function saveConfig(key: string, value: string, label: string) {
   savingKey.value = key;
   try {
@@ -263,6 +354,8 @@ onMounted(() => {
 });
 onUnmounted(() => {
   if (pollTimer !== null) window.clearInterval(pollTimer);
+  // [V7 §9.4+ 扩展 G18] 清理实时预览 debounce timer，防止内存泄漏
+  if (nasResolveTimer !== null) window.clearTimeout(nasResolveTimer);
 });
 </script>
 
@@ -397,17 +490,115 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === NAS_TAB">
+      <!-- [V7 §9.4+ 扩展 G18] 主机路径 → 容器路径 映射管理卡片 -->
+      <SettingsCard title="NAS 主机路径映射（[V7 §9.4+ 扩展 G18]）" :loading="nasMountsLoading">
+        <SettingsRow label="操作">
+          <div class="row-actions">
+            <AppButton type="button" variant="ghost" :disabled="nasProbeBusy" @click="probeNASMountsNow">
+              {{ nasProbeBusy ? "探测中…" : "重新探测挂载" }}
+            </AppButton>
+            <AppButton type="button" variant="ghost" :disabled="nasMountsLoading" @click="loadAll">
+              刷新列表
+            </AppButton>
+          </div>
+          <p class="row-hint">
+            主机路径由后端按以下优先级自动映射：① 手动添加的映射（见下表）②
+            <code>/proc/self/mountinfo</code> SMB/cifs 探测 ③
+            原样透传（容器内路径）。新增媒体源时，输入主机路径即可，下方有实时预览。
+          </p>
+        </SettingsRow>
+
+        <SettingsRow label="手动映射">
+          <div v-if="nasMounts.length === 0" class="nas-empty">
+            暂无手动映射。主机路径会按"自动探测"规则处理。
+          </div>
+          <table v-else class="nas-table">
+            <thead>
+              <tr>
+                <th>主机路径</th>
+                <th>容器内路径</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in nasMounts" :key="m.host_path">
+                <td class="path-cell" :title="m.host_path">{{ m.host_path }}</td>
+                <td class="path-cell" :title="m.container_path">{{ m.container_path }}</td>
+                <td class="actions-cell">
+                  <AppButton
+                    type="button"
+                    variant="ghost"
+                    :disabled="nasDeleteMountBusy === m.host_path"
+                    @click="deleteNASMountByHost(m.host_path)"
+                  >
+                    {{ nasDeleteMountBusy === m.host_path ? "删除中…" : "删除" }}
+                  </AppButton>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </SettingsRow>
+
+        <SettingsRow label="自动探测（仅展示）">
+          <div v-if="nasDetected.length === 0" class="nas-empty">
+            暂无自动探测到的 SMB/cifs 挂载。点击"重新探测挂载"试试。
+          </div>
+          <table v-else class="nas-table">
+            <thead>
+              <tr>
+                <th>挂载点</th>
+                <th>文件系统</th>
+                <th>源</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(d, idx) in nasDetected" :key="`${d.mount_point}-${idx}`">
+                <td class="path-cell" :title="d.mount_point">{{ d.mount_point }}</td>
+                <td>{{ d.fs_type }}</td>
+                <td class="path-cell" :title="d.source">{{ d.source }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </SettingsRow>
+      </SettingsCard>
+
       <SettingsCard title="NAS 媒体源（[V7 §9.4+ 扩展 G1.C]）" :loading="nasLoading">
         <SettingsRow label="添加媒体源">
           <div class="nas-add-row">
             <AppInput v-model="nasNewName" placeholder="名称（可读标识）" class="config-input" />
-            <AppInput v-model="nasNewPath" placeholder="路径（容器内绝对路径，如 /mnt/nas-root/Asia-Movie）" class="config-input" />
+            <AppInput
+              v-model="nasNewPath"
+              placeholder="主机路径（绝对路径，如 /mnt/BTORAGE，后端自动映射）"
+              class="config-input"
+              @input="scheduleResolvePreview"
+            />
             <AppButton type="button" variant="primary" :disabled="nasCreating" @click="createNASSource">
               {{ nasCreating ? "添加中…" : "添加" }}
             </AppButton>
             <AppButton type="button" variant="ghost" :disabled="!nasNewPath || nasTestingPath" @click="testNewPath">
               {{ nasTestingPath ? "检测中…" : "测试路径" }}
             </AppButton>
+          </div>
+          <!-- [V7 §9.4+ 扩展 G18] 实时预览：debounce 300ms 后展示"映射成什么" -->
+          <div
+            v-if="nasNewPath.trim()"
+            class="nas-resolve-preview"
+            :class="{
+              'is-explicit': nasResolvePreview?.source === 'explicit',
+              'is-auto_detected': nasResolvePreview?.source === 'auto_detected',
+              'is-passthrough': nasResolvePreview?.source === 'passthrough',
+            }"
+          >
+            <span v-if="nasResolveBusy">⏳ 解析中…</span>
+            <span v-else-if="nasResolvePreview">
+              预览 →
+              <code class="path-snippet">{{ nasResolvePreview.resolved }}</code>
+              <span class="source-tag">[{{ sourceLabel(nasResolvePreview.source) }}]</span>
+              <span v-if="nasResolvePreview.resolved !== nasResolvePreview.input" class="diff-marker">
+                （重写过）
+              </span>
+            </span>
+            <span v-else class="dim">输入合法路径后展示映射预览</span>
           </div>
           <div v-if="nasTestResult" class="nas-test-result" :class="nasTestResult.exists && nasTestResult.is_dir && nasTestResult.readable ? 'is-ok' : 'is-not_accessible'">
             <span v-if="nasTestResult.exists && nasTestResult.is_dir && nasTestResult.readable">
@@ -582,5 +773,51 @@ onUnmounted(() => {
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--color-text-secondary, #6b7280);
+}
+/* [V7 §9.4+ 扩展 G18] 实时预览 + 路径片段样式 */
+.nas-resolve-preview {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: rgba(120, 120, 120, 0.08);
+  color: var(--color-text-secondary, #4b5563);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.nas-resolve-preview.is-explicit {
+  background: rgba(0, 200, 100, 0.12);
+  color: #047857;
+}
+.nas-resolve-preview.is-auto_detected {
+  background: rgba(110, 108, 240, 0.12);
+  color: #4338ca;
+}
+.nas-resolve-preview.is-passthrough {
+  background: rgba(120, 120, 120, 0.08);
+  color: #4b5563;
+}
+.nas-resolve-preview .path-snippet {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 12px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.nas-resolve-preview .source-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+}
+.nas-resolve-preview .diff-marker {
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b7280);
+}
+.nas-resolve-preview .dim {
+  color: var(--color-text-secondary, #9ca3af);
+  font-size: 12px;
 }
 </style>

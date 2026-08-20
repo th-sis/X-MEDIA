@@ -141,3 +141,82 @@ export function testNASPath(path: string): Promise<NASTestPathResult> {
 export function bulkNASHealth(): Promise<NASBulkHealth> {
   return http.post<NASBulkHealth>("/admin/nas-sources/bulk-health", {});
 }
+
+// ===== [V7 §9.4+ 扩展 G18] NAS 主机路径 → 容器路径 映射管理 =====
+//
+// commit #4 (e914ebc) 添加后端 6 个端点：
+//   GET    /api/admin/nas-mounts                  configured + detected
+//   POST   /api/admin/nas-mounts                  body {host_path, container_path}
+//   PUT    /api/admin/nas-mounts/{host_path}    body {container_path}
+//   DELETE /api/admin/nas-mounts/{host_path}    body {container_path}
+//   POST   /api/admin/nas-mounts/probe           强制重新探测 /proc/self/mountinfo
+//   POST   /api/admin/nas-mounts/resolve         body {path} → {resolved, source}
+//
+// 映射存储在 configs[nas_mount_<host_path>] = container_path。
+// 创建/删除/更新只动 configured（手动），detected 来自 mountinfo 自动探测。
+
+export interface NASMount {
+  host_path: string;
+  container_path: string;
+}
+
+// 探测结果（来自 /proc/self/mountinfo SMB/cifs 挂载）
+export interface NASDetectedMount {
+  mount_point: string;
+  fs_type: string;
+  source: string;
+  super_options: string;
+}
+
+export interface NASMountListView {
+  configured: NASMount[];
+  detected: NASDetectedMount[];
+}
+
+export type NASResolveSource = "explicit" | "auto_detected" | "passthrough";
+
+export interface NASResolveResult {
+  input: string;
+  resolved: string;
+  source: NASResolveSource;
+}
+
+export function fetchNASMounts(): Promise<NASMountListView> {
+  return http.get<NASMountListView>("/admin/nas-mounts");
+}
+
+export function createNASMount(payload: {
+  host_path: string;
+  container_path: string;
+}): Promise<NASMount> {
+  return http.post<NASMount>("/admin/nas-mounts", payload);
+}
+
+export function updateNASMount(
+  hostPath: string,
+  payload: { container_path: string }
+): Promise<NASMount> {
+  // route.go 用 chi.URLParam(r, "host_path")，传值需要 url-encode 但 client 已经走在
+  // buildURL(path) 里走 URLSearchParams，这里直接拼接即可
+  return http.put<NASMount>(
+    `/admin/nas-mounts/${encodeURIComponent(hostPath)}`,
+    payload
+  );
+}
+
+export function deleteNASMount(hostPath: string): Promise<{ host_path: string; deleted: boolean }> {
+  return http.del<{ host_path: string; deleted: boolean }>(
+    `/admin/nas-mounts/${encodeURIComponent(hostPath)}`
+  );
+}
+
+export function probeNASMounts(): Promise<{ detected: NASDetectedMount[]; count: number }> {
+  return http.post<{ detected: NASDetectedMount[]; count: number }>(
+    "/admin/nas-mounts/probe",
+    {}
+  );
+}
+
+export function resolveNASPath(path: string): Promise<NASResolveResult> {
+  return http.post<NASResolveResult>("/admin/nas-mounts/resolve", { path });
+}
