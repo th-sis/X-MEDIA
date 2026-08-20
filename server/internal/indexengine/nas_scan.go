@@ -183,6 +183,42 @@ func (s *Service) scanNAS(ctx context.Context, roots []string, incremental bool)
 		}
 	}
 	s.runPhaseC(ctx)
+
+	// [G4 修正] V7 §9.4+ 设计意图: nas_sources.file_count 是 cache,
+	// 应在扫描完成后回填, 让 admin UI 看到真实视频文件数.
+	// 用与 discoverPhaseA 一致的口径 (WalkDir + IsVideoFile 过滤),
+	// 保证前端显示的 file_count 与 media_index 实际入库数同源.
+	if s.nasSources != nil {
+		now := time.Now().UTC()
+		sources, _ := s.nasSources.List(ctx)
+		for _, src := range sources {
+			scanned := false
+			for _, r := range roots {
+				if r == src.Path {
+					scanned = true
+					break
+				}
+			}
+			if !scanned {
+				continue
+			}
+			acc := domain.NASAccessibilityOK
+			if _, err := os.Stat(src.Path); err != nil {
+				acc = domain.NASAccessibilityNotAccessible
+			}
+			count := int64(0)
+			_ = filepath.WalkDir(src.Path, func(_ string, d fs.DirEntry, err error) error {
+				if err != nil || d.IsDir() {
+					return nil
+				}
+				if IsVideoFile(d.Name()) {
+					count++
+				}
+				return nil
+			})
+			_ = s.nasSources.UpdateHealth(ctx, src.ID, acc, count, now)
+		}
+	}
 }
 
 // discoverPhaseA 递归遍历根目录，产出候选视频文件路径（§9.7.1 Phase A）。

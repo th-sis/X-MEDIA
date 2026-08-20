@@ -3,13 +3,16 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"xmedia/internal/domain"
+	"xmedia/internal/indexengine"
 )
 
 // [V7 整改 commit #4] NAS 主机路径 -> 容器路径 自动映射。
@@ -392,15 +395,12 @@ func (h *Handler) nasSourceBulkHealth(w http.ResponseWriter, r *http.Request) {
 		count := int64(0)
 		// [V7 改造 commit #4] src.Path 已是容器内路径 (创建/更新时已 rewrite),
 		// 这里直接 os.Stat 。
+		// [G4 修正] 与 ScanNASFull 同口径: 用 filepath.WalkDir 递归数视频文件
+		// (mkv/mp4/ts/avi/iso 等), 而不是只看一级子文件.
+		// 这样 /mnt/STORAGE/Asia-Movie 这种顶级分类目录, 一级都是子目录也能正确数.
 		if info, statErr := os.Stat(src.Path); statErr == nil && info.IsDir() {
-			if entries, readErr := os.ReadDir(src.Path); readErr == nil {
-				acc = domain.NASAccessibilityOK
-				for _, e := range entries {
-					if !e.IsDir() {
-						count++
-					}
-				}
-			}
+			acc = domain.NASAccessibilityOK
+			count = countVideoFiles(src.Path)
 		}
 		if err := repo.UpdateHealth(r.Context(), src.ID, acc, count, now); err != nil {
 			results = append(results, map[string]any{
@@ -423,6 +423,29 @@ func (h *Handler) nasSourceBulkHealth(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeOK(w, map[string]any{"checked": len(results), "results": results})
+}
+
+// countVideoFiles 递归遍历 root, 统计 indexengine.IsVideoFile() 认定的视频文件数.
+// 与 ScanNASFull.discoverPhaseA 保持同一口径 (V7 §9.7.1 Phase A 视频文件白名单),
+// 保证"全部可访问检测"的 count 与实际扫描入库的视频数一致.
+//
+// SMB 瞬时断开的容忍: 任何条目 stat 失败时, WalkDir 跳过该子树 (不向上抛 err),
+// 不会因为一个坏文件就中断整轮统计.
+func countVideoFiles(root string) int64 {
+	var n int64
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // 跳过不可读条目 (SMB 瞬时断开容忍, 与 ScanNASFull 一致)
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if indexengine.IsVideoFile(d.Name()) {
+			n++
+		}
+		return nil
+	})
+	return n
 }
 
 func parseIDFromPath(r *http.Request, key string) (int64, error) {
