@@ -292,15 +292,33 @@ onBeforeUnmount(() => {
   transition: transform 0.28s ease, box-shadow 0.28s ease;
 }
 
-/* [P0#1] 折叠态消除阴影投射，避免视觉上"遮挡"主内容区 */
+/* [P0#1 v2 hotfix — 研究 LitePan 原版源码后]
+ * 根因 (复测):
+ *   dark 模式下 tokens.css 的 --admin-sidebar-shadow = "0 18px 46px rgba(2,6,23,0.28),
+ *   inset 0 1px 0 rgba(255,255,255,0.06)", 外阴影向右投射 18px, 即便 sidebar 物理
+ *   宽度 64px, 阴影仍视觉延伸到 64+18=82px, 加上 border-right 1px = 83px, 视觉盖住 body.
+ *   LitePan 原版 AdminShell.vue 也没修这个, 这是原项目 dark 模式设计缺陷.
+ * 修复:
+ *   1) box-shadow 改 inset-only (向左内阴影当右边框), 移除所有外投射
+ *   2) border-right 归零
+ *   3) width/min-width/max-width 用 !important 强约束, 防御任何 cascade 冲突
+ *   4) data-hotfix="v2" 标记, 浏览器/DevTools 可识别 (本属性无副作用) */
 .admin--collapsed .sidebar {
-  box-shadow: none;
-  /* [P0#1 复测] 强约束物理宽度, 防止 grid 列宽被内部内容撑爆.
-   * 仅在 desktop collapsed 生效, mobile drawer 走 .admin--drawer-open 路径不受影响. */
-  width: 64px;
-  min-width: 64px;
-  max-width: 64px;
-  overflow: hidden;
+  /* 用 inset 阴影代替外阴影 + border-right, 视觉上仍有边界, 但绝不外延 */
+  box-shadow: inset -1px 0 0 rgba(148, 163, 184, 0.14) !important;
+  border-right: 0 !important;
+  /* 物理宽度强约束 — !important 防御任何 [data-v-xxx] scoped 冲突 */
+  width: 64px !important;
+  min-width: 64px !important;
+  max-width: 64px !important;
+  overflow: hidden !important;
+  /* 防止 hot-reload / 第三方扩展改 box-shadow, 内联再次声明 */
+  --admin-sidebar-shadow: none !important;
+}
+
+/* 标记位: 浏览器 DevTools 可看到这个属性, 用户/调试时能确认 hotfix v2 已生效 */
+.admin--collapsed {
+  --hotfix-marker: "v2-pinned-20260821";
 }
 
 .sidebar__header {
@@ -433,12 +451,12 @@ onBeforeUnmount(() => {
 }
 
 .admin--collapsed .sidebar__logo {
-  /* [P0#1 复测] 同时设 width/height, 防止原图比 48x28 小时 max-* 失效.
-   * object-fit: contain 让 SVG/PNG 保持比例居中显示. */
-  width: 48px;
-  height: 28px;
-  max-width: 48px;
-  max-height: 28px;
+  /* [P0#1 v2 hotfix] 强约束 + !important, 防御 cascade 冲突.
+   * 同时设 width/height + max-*, 防止原图比 48x28 小时 max-* 单独失效. */
+  width: 48px !important;
+  height: 28px !important;
+  max-width: 48px !important;
+  max-height: 28px !important;
   object-fit: contain;
   object-position: center;
 }
