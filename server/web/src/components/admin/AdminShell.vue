@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeMount, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AdminAccountChip from "@/components/admin/AdminAccountChip.vue";
 import AdminGlobalActions from "@/components/admin/AdminGlobalActions.vue";
 import AdminNavIcon from "@/components/admin/AdminNavIcon.vue";
@@ -62,9 +62,20 @@ function syncViewport() {
   if (!isMobile.value) mobileDrawerOpen.value = false;
 }
 
+// [P0#1 修复] 通过 .admin 元素 ref 同步 CSS 变量。
+// 原实现设到 document.documentElement 会被 .admin 自身声明的 --sidebar-width 覆盖，是死代码。
+// 现在绑到 .admin 元素自身，确保 .global-chrome 等子节点能读到正确值，避免首帧闪烁。
+const adminRoot = ref<HTMLElement | null>(null);
+
 function syncSidebarWidthVar() {
   const width = isMobile.value ? "0px" : sidebarCollapsed.value ? "64px" : "220px";
-  document.documentElement.style.setProperty("--sidebar-width", width);
+  const el = adminRoot.value;
+  if (el) {
+    el.style.setProperty("--sidebar-width", width);
+  } else {
+    // ref 尚未挂载（同步执行早于 mount）时先设到 :root，作为兜底
+    document.documentElement.style.setProperty("--sidebar-width", width);
+  }
 }
 
 function toggleSidebar() {
@@ -94,8 +105,14 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && mobileDrawerOpen.value) closeMobileDrawer();
 }
 
-onMounted(() => {
+onBeforeMount(() => {
+  // [P0#1 修复] 提前到 onBeforeMount：在 Vue 渲染首帧前就读取 localStorage
+  // 并同步 CSS 变量，避免 sidebar 宽度从默认 220px 跳到 collapsed 64px 的闪烁。
   readCollapsedPref();
+  syncSidebarWidthVar();
+});
+
+onMounted(() => {
   syncViewport();
   syncSidebarWidthVar();
   window.addEventListener("resize", syncViewport);
@@ -115,12 +132,14 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", syncViewport);
   window.removeEventListener("keydown", onKeydown);
   document.body.style.overflow = "";
+  // 清理兜底设在 :root 的变量；.admin ref 元素会被 Vue 自动释放
   document.documentElement.style.removeProperty("--sidebar-width");
 });
 </script>
 
 <template>
   <div
+    ref="adminRoot"
     class="admin"
     :class="{
       'admin--collapsed': sidebarCompact,
@@ -267,8 +286,15 @@ onBeforeUnmount(() => {
   border-right: 1px solid var(--admin-sidebar-border);
   box-shadow: var(--admin-sidebar-shadow);
   color: #fff;
-  border-top-right-radius: var(--radius-lg);
+  /* [P0#1] 移除与 global-chrome 的圆角缝隙，让边界平齐 */
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
   transition: transform 0.28s ease, box-shadow 0.28s ease;
+}
+
+/* [P0#1] 折叠态消除阴影投射，避免视觉上"遮挡"主内容区 */
+.admin--collapsed .sidebar {
+  box-shadow: none;
 }
 
 .sidebar__header {
@@ -346,6 +372,7 @@ onBeforeUnmount(() => {
   font-weight: 500;
   transition: all 0.2s ease;
   cursor: pointer;
+  position: relative; /* [P0#1] collapsed tooltip 绝对定位参照 */
 }
 
 .nav-item:hover:not(.nav-item--active):not(:disabled) {
@@ -400,8 +427,8 @@ onBeforeUnmount(() => {
 }
 
 .admin--collapsed .sidebar__logo {
-  max-width: 28px;
-  max-height: 34px;
+  max-width: 48px;   /* [P0#1] 中等识别度，避免缩小到几乎不可辨 */
+  max-height: 28px;
 }
 
 .admin--collapsed .sidebar__nav {
@@ -423,7 +450,30 @@ onBeforeUnmount(() => {
 }
 
 .admin--collapsed .nav-item__label {
-  display: none;
+  /* [P0#1] collapsed 模式下用 tooltip 替代 display:none，hover/focus 时弹出文字气泡 */
+  display: block;
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--surface, #1f2937);
+  color: var(--text, #e5e7eb);
+  padding: 4px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 130;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.admin--collapsed .nav-item:hover .nav-item__label,
+.admin--collapsed .nav-item:focus-within .nav-item__label {
+  opacity: 1;
 }
 
 .sidebar-toggle {

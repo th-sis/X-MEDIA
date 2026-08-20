@@ -3,6 +3,11 @@
 /.tmp/
 /screenshots/
 
+# 审计/外部交付物（不入仓）
+/sjbg.docx
+/audit*.docx
+/reports/
+
 # 冒烟测试/临时跑批数据目录（CI/手工 smoke run）
 /server/.tmp_*/
 /server/.tmp/

@@ -32,6 +32,9 @@ import {
   type NASDetectedMount,
   type NASResolveResult,
 } from "@/api/xmedia";
+// [P0#2] 健康检查面板补"查看日志"按钮，复用 logs API
+import { logsApi, type LogEntry } from "@/api/logs";
+import AppModal from "@/components/base/AppModal.vue";
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 import { toast } from "@/composables/useToast";
 import "@/styles/admin-shared.css";
@@ -84,11 +87,24 @@ const savingKey = ref("");
 const testing = ref("");
 const scanning = ref(false);
 
+// [P0#2] 健康检查面板 — 日志弹窗状态
+const healthLogModalOpen = ref(false);
+const healthLogEntries = ref<LogEntry[]>([]);
+const healthLogLoading = ref(false);
+const healthLogLevel = ref<number>(30); // 默认 WARNING
+// 健康检查"重扫索引"独立 busy 标志，避免与 OVERVIEW/INDEX_TAB 的 scanning 串扰
+const healthScanBusy = ref(false);
+
 const nasAvailable = computed(() => !!snapshot.value?.capabilities.nas_available);
 const nasIndexComplete = computed(() => !!snapshot.value?.capabilities.nas_index_complete);
 const pansearchAvailable = computed(() => !!snapshot.value?.capabilities.pansearch_available);
 const indexProgress = computed(() => snapshot.value?.index_progress ?? null);
 const indexedTotal = computed(() => snapshot.value?.indexed_total ?? 0);
+
+// [P0#2] NAS 媒体源不可访问计数
+const nasInaccessibleCount = computed(
+  () => nasSources.value.filter((s) => s.last_accessibility === "not_accessible").length,
+);
 
 let pollTimer: number | null = null;
 
@@ -336,6 +352,49 @@ async function triggerScan(mode: "full" | "incremental") {
   } finally {
     window.setTimeout(() => { scanning.value = false; }, 2000);
   }
+}
+
+// ===== [P0#2] 健康检查面板补操作按钮 =====
+
+// 跳转到指定 Tab（用于"去配置"按钮）
+function goToTab(tab: string) {
+  void setActiveTab(tab);
+}
+
+// 健康检查面板里的"触发全盘扫描"——独立 busy 标志
+async function triggerHealthFullScan() {
+  healthScanBusy.value = true;
+  try {
+    await startNasScan("full");
+    toast.success("全盘扫描已启动");
+    fetchSnapshot().then((s) => { if (s) snapshot.value = s; }).catch(() => undefined);
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "全盘扫描启动失败"));
+  } finally {
+    window.setTimeout(() => { healthScanBusy.value = false; }, 2000);
+  }
+}
+
+// 打开健康检查"查看日志"弹窗，按当前级别过滤最近 50 条
+async function openHealthLogs() {
+  healthLogModalOpen.value = true;
+  healthLogLoading.value = true;
+  try {
+    const entries = await logsApi().list({
+      level: healthLogLevel.value,
+      limit: 50,
+    });
+    healthLogEntries.value = entries ?? [];
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "日志加载失败"));
+    healthLogEntries.value = [];
+  } finally {
+    healthLogLoading.value = false;
+  }
+}
+
+function closeHealthLogs() {
+  healthLogModalOpen.value = false;
 }
 
 function toneFor(status: string | undefined): "success" | "warning" | "danger" {
@@ -683,17 +742,127 @@ onUnmounted(() => {
           <AdminStatusPill :tone="toneFor(health?.validation?.tmdb_key?.status)">
             {{ health?.validation?.tmdb_key?.message ?? "未知" }}
           </AdminStatusPill>
+          <!-- [P0#2] 异常时引导用户去 TMDB 配置 Tab -->
+          <AppButton
+            v-if="health?.validation?.tmdb_key?.status !== 'ok'"
+            type="button" size="sm" variant="ghost" class="row-action-btn"
+            @click="goToTab(TMDB_TAB)"
+          >
+            去配置
+          </AppButton>
         </SettingsRow>
         <SettingsRow label="PanSou">
           <AdminStatusPill :tone="toneFor(health?.validation?.pansearch_url?.status)">
             {{ health?.validation?.pansearch_url?.message ?? "未知" }}
           </AdminStatusPill>
+          <!-- [P0#2] 异常时引导用户去盘搜配置 Tab -->
+          <AppButton
+            v-if="health?.validation?.pansearch_url?.status !== 'ok'"
+            type="button" size="sm" variant="ghost" class="row-action-btn"
+            @click="goToTab(PANSEARCH_TAB)"
+          >
+            去配置
+          </AppButton>
+        </SettingsRow>
+        <SettingsRow label="NAS 媒体源">
+          <span class="settings-help">
+            <template v-if="nasInaccessibleCount > 0">
+              ⚠ {{ nasInaccessibleCount }} 个不可访问（共 {{ nasSources.length }} 个）
+            </template>
+            <template v-else-if="nasSources.length > 0">
+              全部可访问（共 {{ nasSources.length }} 个）
+            </template>
+            <template v-else>
+              尚未添加媒体源
+            </template>
+          </span>
+          <!-- [P0#2] 引导用户去 NAS 配置 Tab 排查 -->
+          <AppButton type="button" size="sm" variant="ghost" class="row-action-btn" @click="goToTab(NAS_TAB)">
+            查看
+          </AppButton>
+          <AppButton
+            type="button" size="sm" variant="ghost" class="row-action-btn"
+            :disabled="nasProbeBusy" @click="probeNASMountsNow"
+          >
+            {{ nasProbeBusy ? "探测中…" : "重新探测" }}
+          </AppButton>
+        </SettingsRow>
+        <SettingsRow label="索引">
+          <span class="settings-help">
+            <template v-if="snapshot?.index_scanning">扫描中…</template>
+            <template v-else-if="nasIndexComplete">已完成（{{ indexedTotal }} 条）</template>
+            <template v-else>未完成</template>
+          </span>
+          <!-- [P0#2] 触发全盘扫描 -->
+          <AppButton
+            type="button" size="sm" variant="ghost" class="row-action-btn"
+            :disabled="healthScanBusy" @click="triggerHealthFullScan"
+          >
+            {{ healthScanBusy ? "启动中…" : "触发全盘扫描" }}
+          </AppButton>
+        </SettingsRow>
+        <SettingsRow label="日志">
+          <span class="settings-help">查看最近告警与错误</span>
+          <!-- [P0#2] 打开日志弹窗 -->
+          <AppButton
+            type="button" size="sm" variant="ghost" class="row-action-btn"
+            @click="openHealthLogs"
+          >
+            查看日志
+          </AppButton>
         </SettingsRow>
         <SettingsRow label="操作">
           <AppButton type="button" variant="ghost" :disabled="loading" @click="loadAll">重新检查</AppButton>
         </SettingsRow>
       </SettingsCard>
     </div>
+
+    <!-- [P0#2] 健康检查"查看日志"弹窗 -->
+    <AppModal
+      :open="healthLogModalOpen"
+      title="最近日志（最多 50 条）"
+      size="lg"
+      @close="closeHealthLogs"
+    >
+      <div class="health-log-filters">
+        <span class="settings-help">级别过滤：</span>
+        <AppButton
+          type="button" size="sm" variant="ghost"
+          :class="{ 'is-active': healthLogLevel === 0 }"
+          @click="healthLogLevel = 0; openHealthLogs()"
+        >全部</AppButton>
+        <AppButton
+          type="button" size="sm" variant="ghost"
+          :class="{ 'is-active': healthLogLevel === 30 }"
+          @click="healthLogLevel = 30; openHealthLogs()"
+        >WARNING</AppButton>
+        <AppButton
+          type="button" size="sm" variant="ghost"
+          :class="{ 'is-active': healthLogLevel === 40 }"
+          @click="healthLogLevel = 40; openHealthLogs()"
+        >ERROR</AppButton>
+      </div>
+      <div v-if="healthLogLoading" class="health-log-loading">加载中…</div>
+      <div v-else-if="healthLogEntries.length === 0" class="health-log-empty">该级别暂无日志</div>
+      <table v-else class="health-log-table">
+        <thead>
+          <tr>
+            <th class="col-time">时间</th>
+            <th class="col-level">级别</th>
+            <th class="col-module">模块</th>
+            <th class="col-msg">消息</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="e in healthLogEntries" :key="e.id">
+            <td class="col-time">{{ e.timestamp }}</td>
+            <td class="col-level">{{ e.level_emoji }} {{ e.level_name }}</td>
+            <td class="col-module">{{ e.module_name }}</td>
+            <td class="col-msg">{{ e.message }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </AppModal>
   </div>
 </template>
 
@@ -705,6 +874,56 @@ onUnmounted(() => {
   display: flex;
   gap: 8px;
 }
+
+/* [P0#2] 健康检查面板行内引导按钮（去配置/查看/重新探测/触发扫描/查看日志） */
+.row-action-btn {
+  margin-left: 8px;
+}
+/* [P0#2] 日志弹窗样式 */
+.health-log-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border, rgba(0, 0, 0, 0.06));
+}
+.health-log-filters .is-active {
+  background: var(--brand, #3b82f6);
+  color: #fff;
+  border-color: var(--brand, #3b82f6);
+}
+.health-log-loading,
+.health-log-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 13px;
+}
+.health-log-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.health-log-table th,
+.health-log-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border, rgba(0, 0, 0, 0.06));
+  vertical-align: top;
+}
+.health-log-table th {
+  font-weight: 600;
+  color: var(--color-text-secondary, #6b7280);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.health-log-table .col-time { white-space: nowrap; width: 160px; }
+.health-log-table .col-level { white-space: nowrap; width: 110px; }
+.health-log-table .col-module { white-space: nowrap; width: 80px; }
+.health-log-table .col-msg { word-break: break-word; }
 .settings-help {
   color: var(--color-text-secondary, #6b7280);
   font-size: 13px;
