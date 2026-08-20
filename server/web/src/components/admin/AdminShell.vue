@@ -295,6 +295,12 @@ onBeforeUnmount(() => {
 /* [P0#1] 折叠态消除阴影投射，避免视觉上"遮挡"主内容区 */
 .admin--collapsed .sidebar {
   box-shadow: none;
+  /* [P0#1 复测] 强约束物理宽度, 防止 grid 列宽被内部内容撑爆.
+   * 仅在 desktop collapsed 生效, mobile drawer 走 .admin--drawer-open 路径不受影响. */
+  width: 64px;
+  min-width: 64px;
+  max-width: 64px;
+  overflow: hidden;
 }
 
 .sidebar__header {
@@ -427,8 +433,14 @@ onBeforeUnmount(() => {
 }
 
 .admin--collapsed .sidebar__logo {
-  max-width: 48px;   /* [P0#1] 中等识别度，避免缩小到几乎不可辨 */
+  /* [P0#1 复测] 同时设 width/height, 防止原图比 48x28 小时 max-* 失效.
+   * object-fit: contain 让 SVG/PNG 保持比例居中显示. */
+  width: 48px;
+  height: 28px;
+  max-width: 48px;
   max-height: 28px;
+  object-fit: contain;
+  object-position: center;
 }
 
 .admin--collapsed .sidebar__nav {
@@ -610,6 +622,11 @@ onBeforeUnmount(() => {
   overflow-x: clip;
   overflow-y: auto;
   background: var(--bg);
+  /* [P0#1 复测] 提升 body 到 sidebar 之上, 防止任何 z-index/stacking 异常
+   * 导致的视觉遮盖（之前 sidebar z-index:120 + 无 body z-index 时, 偶发
+   * 情况下 sidebar 视觉上盖住 body 左侧文字/卡片）. */
+  position: relative;
+  z-index: 1;
 }
 
 @media (max-width: 768px) {
