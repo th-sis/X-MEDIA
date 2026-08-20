@@ -328,6 +328,8 @@ func NewRouter(d Deps) http.Handler {
 				// §1.4 Step 2：TMDB 配置专用端点（保存即测试 / 仅测试）
 				r.Put("/tmdb/config", h.tmdbAdminConfig)
 				r.Post("/tmdb/test", h.tmdbAdminTest)
+				// [P2#7] 手动触发 media_library LRU 淘汰
+				r.Post("/tmdb/evict", h.tmdbAdminEvict)
 				r.Get("/notifications", h.listNotifications)
 				r.Get("/notifications/unread-count", h.notificationUnreadCount)
 				r.Post("/notifications/read-all", h.markAllNotificationsRead)

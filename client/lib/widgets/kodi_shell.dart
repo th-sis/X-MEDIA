@@ -121,35 +121,39 @@ class _KodiShellState extends State<KodiShell> {
       body = _kPageNavs[_pageIndex.clamp(0, _kPageNavs.length - 1)].builder(context);
     }
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _onBack();
-      },
-      child: ColoredBox(
-        color: AppColors.background,
-        child: Column(
-          children: [
-            _TopBar(
-              now: _now,
-              categoryIndex: _categoryIndex,
-              pageIndex: _pageIndex,
-              onCategoryTap: _selectCategory,
-            ),
-            Expanded(
-              child: Stack(
-                children: [
-                  const Positioned.fill(child: _Background()),
-                  Positioned.fill(child: KeyedSubtree(key: ValueKey(_currentKey()), child: body)),
-                ],
+    // [P2#8] 监听 server_stopping: 复用 _ServerStoppingBanner 在 build 外做副作用,
+    // 避免 build 期间 addPostFrameCallback 反复注册导致 SnackBar 重复弹.
+    return _ServerStoppingBanner(
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (didPop) return;
+          _onBack();
+        },
+        child: Scaffold(
+          backgroundColor: AppColors.background,
+          body: Column(
+            children: [
+              _TopBar(
+                now: _now,
+                categoryIndex: _categoryIndex,
+                pageIndex: _pageIndex,
+                onCategoryTap: _selectCategory,
               ),
-            ),
-            _BottomBar(
-              pageIndex: _pageIndex,
-              onSelect: _selectPage,
-            ),
-          ],
+              Expanded(
+                child: Stack(
+                  children: [
+                    const Positioned.fill(child: _Background()),
+                    Positioned.fill(child: KeyedSubtree(key: ValueKey(_currentKey()), child: body)),
+                  ],
+                ),
+              ),
+              _BottomBar(
+                pageIndex: _pageIndex,
+                onSelect: _selectPage,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -483,4 +487,49 @@ class _PageNavButton extends StatelessWidget {
       },
     );
   }
+}
+
+/// [P2#8] 监听 AppState.serverStoppingMessage 变化, 弹一次 SnackBar 后自动 clear.
+/// 用 StatefulWidget + didChangeDependencies 替代 build 内 addPostFrameCallback,
+/// 避免 build 期间反复注册回调导致 SnackBar 重复弹.
+///
+/// 重入守门: msg 从 "X" → null → "X" 都能再次弹, 但同一 msg 在
+/// serverStoppingMessage 生命周期内只弹一次.
+class _ServerStoppingBanner extends StatefulWidget {
+  final Widget child;
+  const _ServerStoppingBanner({required this.child});
+
+  @override
+  State<_ServerStoppingBanner> createState() => _ServerStoppingBannerState();
+}
+
+class _ServerStoppingBannerState extends State<_ServerStoppingBanner> {
+  String? _lastShown;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final msg = context.select<AppState, String?>((s) => s.serverStoppingMessage);
+    if (msg == null) {
+      // msg 已被 clear, 重置守门允许下次再弹
+      _lastShown = null;
+      return;
+    }
+    if (msg == _lastShown) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _lastShown = msg;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          duration: const Duration(seconds: 8),
+          backgroundColor: AppColors.warning,
+        ),
+      );
+      context.read<AppState>().clearServerStopping();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

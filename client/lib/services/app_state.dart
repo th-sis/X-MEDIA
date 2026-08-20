@@ -20,6 +20,10 @@ class AppState extends ChangeNotifier {
   bool wsConnected = false;
   String error = '';
 
+  // [P2#8] 服务优雅退出通知: 后端 SIGTERM 时通过 WS 推送 server_stopping,
+  // 这里截获后转为 UI 提示, 避免用户误以为服务挂掉.
+  String? serverStoppingMessage;
+
   StreamSubscription<WsEvent>? _wsSub;
 
   AppState() {
@@ -80,7 +84,21 @@ class AppState extends ChangeNotifier {
         capabilities = Capabilities.fromJson(e.payload);
         notifyListeners();
         break;
+      case 'server_stopping':
+        // [P2#8] §28.4 服务优雅退出: 弹"维护中"提示, 引导用户稍候重试
+        final reason = e.payload['reason'] as String? ?? 'graceful';
+        final retry = e.payload['retry_after_sec'] as int? ?? 8;
+        serverStoppingMessage = '服务正在维护（$reason），约 ${retry}s 后可重试';
+        notifyListeners();
+        break;
     }
+  }
+
+  /// 清除 server_stopping 提示（UI 已展示 SnackBar 后调用）。
+  void clearServerStopping() {
+    if (serverStoppingMessage == null) return;
+    serverStoppingMessage = null;
+    notifyListeners();
   }
 
   Future<void> refresh() async {

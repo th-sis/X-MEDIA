@@ -179,6 +179,9 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 			if err != nil || savedRes == nil {
 				continue // 转存失败：下一个结果
 			}
+			// [V7 §6.9.2] 转存成功后, 把文件名改写为统一模板
+			// (失败时静默, 不影响 P1 命中 — 见 post_rename.go).
+			s.applyPostSaveRename(ctx, drv, t, savedRes)
 			s.push(t, domain.StageResolvingLink, "获取播放链接...", 88)
 			s.indexSavedFile(ctx, t, acc, r.Source, savedRes)
 			ticket, err := s.signer.Sign(ctx, ticketClaimsFor(t, savedRes.FileID, r.Source, acc.ID), 0)

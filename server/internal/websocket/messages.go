@@ -80,6 +80,14 @@ type SubReadyPayload struct {
 	ResultSource   string `json:"result_source"`
 }
 
+// ServerStoppingPayload [P2#8] 服务优雅退出通知（§28.4）：
+// 客户端收到后可弹"服务维护中"提示, 避免误以为服务挂掉.
+// RetryAfterSec 建议重连等待时间, Reason 给人类可读的原因.
+type ServerStoppingPayload struct {
+	Reason        string `json:"reason"`
+	RetryAfterSec int    `json:"retry_after_sec"`
+}
+
 // HealthPayload 健康检查首条消息。
 type HealthPayload struct {
 	DB              string              `json:"db"`

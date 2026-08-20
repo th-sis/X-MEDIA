@@ -188,3 +188,24 @@ func (h *Handler) tmdbAdminTest(w http.ResponseWriter, r *http.Request) {
 	}
 	writeOK(w, map[string]any{"ok": true, "test_count": count})
 }
+
+// POST /api/admin/tmdb/evict — [P2#7] 手动触发 media_library LRU 淘汰。
+// 返回 { "removed": N, "max_rows": ..., "keep_rows": ..., "total": N }.
+// 用户在 XMediaPanel 改完 max_rows/keep_rows 后, 点"立即清理"即可看到效果.
+func (h *Handler) tmdbAdminEvict(w http.ResponseWriter, r *http.Request) {
+	if h.tmdb == nil {
+		writeErr(w, domain.Errorf(domain.CodeInternal, "tmdb 服务未就绪"))
+		return
+	}
+	removed := h.tmdb.MaybeEvict(r.Context())
+	out := map[string]any{"removed": removed}
+	if h.configs != nil {
+		if v, ok, err := h.configs.Get(r.Context(), domain.ConfigMediaLibraryMaxRows); err == nil && ok {
+			out["max_rows"] = v
+		}
+		if v, ok, err := h.configs.Get(r.Context(), domain.ConfigMediaLibraryKeepRows); err == nil && ok {
+			out["keep_rows"] = v
+		}
+	}
+	writeOK(w, out)
+}

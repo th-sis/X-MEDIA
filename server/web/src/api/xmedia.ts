@@ -71,6 +71,16 @@ export function startNasScan(mode: "full" | "incremental"): Promise<unknown> {
   return http.post(`/admin/index/nas/${mode}`);
 }
 
+// [P2#7] 手动触发 media_library LRU 淘汰, 返回淘汰数量 + 当前阈值.
+export interface TmdbEvictResult {
+  removed: number;
+  max_rows?: string;
+  keep_rows?: string;
+}
+export function tmdbEvict(): Promise<TmdbEvictResult> {
+  return http.post<TmdbEvictResult>("/admin/tmdb/evict", {});
+}
+
 // TMDB 配置连通性测试：走搜索端点（有 key 时真实 API，无 key 时演示数据）。
 // 注意：/api/tmdb/search 返回裸列表（无 success 包装），不能走 http 的标准
 // 解包逻辑，这里直接 fetch 并解析。

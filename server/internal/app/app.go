@@ -15,13 +15,16 @@ import (
 	"xmedia/internal/cacheretention"
 	"xmedia/internal/config"
 	"xmedia/internal/driver"
+	"xmedia/internal/domain"
 	"xmedia/internal/eventbus"
 	"xmedia/internal/file"
 	"xmedia/internal/logx"
 	"xmedia/internal/playback"
 	"xmedia/internal/settings"
 	"xmedia/internal/store"
+	"xmedia/internal/tmdb"
 	"xmedia/internal/upload"
+	"xmedia/internal/websocket"
 )
 
 // App 按依赖顺序构造与关闭各子系统。
@@ -42,6 +45,8 @@ type App struct {
 	playback       *playback.Service
 	automation     *automation.Service
 	cacheRetention *cacheretention.Service
+	tmdb           *tmdb.Service     // [P2#7] 启动时主动 LRU 检查
+	hub            *websocket.Hub   // [P2#8] Shutdown 时广播 server_stopping
 	httpSrv        *http.Server
 	httpBaseCancel context.CancelFunc
 }
@@ -80,11 +85,22 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		return nil, err
 	}
 	svc := wireServices(cfg, logs, stBundle, core)
+	xm := wireXMedia(stBundle, svc, core, logs)
 
 	// [v7 整改] 启动序第 1.5 步：关键配置验证（不阻塞，失败仅记日志）
 	runStartupValidation(ctx, stBundle)
 
-	httpSrv, err := wireHTTPServer(cfg, logs, stBundle, core, svc)
+	// [A1] §28.2 启动恢复：接管重启前遗留的 active 任务（HTTP 就绪前同步执行）
+	if xm.resolve != nil {
+		xm.resolve.RecoverStartup(context.Background())
+	}
+	// [A3] §20 订阅自动搜寻：后台周期执行（间隔可配，默认 7 天）
+	if xm.subSearcher != nil {
+		days := configInt(stBundle.store.Configs, domain.ConfigSubscriptionSearchDays, 7)
+		xm.subSearcher.Start(context.Background(), time.Duration(days)*24*time.Hour)
+	}
+
+	httpSrv, err := wireHTTPServer(cfg, logs, stBundle, core, svc, xm)
 	if err != nil {
 		return nil, err
 	}
@@ -109,6 +125,8 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		playback:       svc.playback,
 		automation:     svc.automation,
 		cacheRetention: svc.cacheRetention,
+		tmdb:           xm.tmdb, // [P2#7] 启动时主动 LRU 检查
+		hub:            xm.hub,  // [P2#8] Shutdown 时广播 server_stopping
 		httpSrv:        httpSrv,
 		httpBaseCancel: httpBaseCancel,
 	}, nil
@@ -130,6 +148,15 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	if a.uploads != nil {
 		a.uploads.StartTempCleanup(ctx)
+	}
+	// [P2#7] 启动时主动检查一次 media_library LRU 淘汰：
+	// 平时由 tmdb Upsert 后异步触发, 但首次启动 / 长时间运行后未做 Upsert
+	// 的实例需要主动触发一次, 处理历史超额.
+	if a.tmdb != nil {
+		removed := a.tmdb.MaybeEvict(context.Background())
+		if removed > 0 {
+			a.log.Info("启动时 LRU 淘汰", "removed", removed)
+		}
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -164,6 +191,17 @@ func (a *App) Shutdown(ctx context.Context) error {
 	}
 	if a.httpBaseCancel != nil {
 		a.httpBaseCancel()
+	}
+
+	// [P2#8] §28.4 在 HTTP 关闭前广播 server_stopping, 让 WS 客户端有 1-2s 时间
+	// 收消息并弹"服务维护中"提示. Broadcast 是同步操作, 立即写到所有
+	// 已连接 client 的 send channel, 客户端处理时我们才执行 HTTP.Shutdown.
+	// 注意: 25s shutdownBudget 是 ctx 的总预算, broadcast 本身不耗时.
+	if a.hub != nil {
+		a.hub.Broadcast(websocket.TypeServerStopping, websocket.ServerStoppingPayload{
+			Reason:        "graceful",
+			RetryAfterSec: int(shutdownHTTPBudget.Seconds()),
+		})
 	}
 
 	httpCtx, cancelHTTP := context.WithTimeout(ctx, shutdownHTTPBudget)

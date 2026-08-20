@@ -13,6 +13,7 @@ import {
   fetchXMediaConfigs,
   saveXMediaConfig,
   startNasScan,
+  tmdbEvict,
   testTmdbKey,
   fetchNASSources,
   createNASSource as createNASSourceRequest,
@@ -38,6 +39,10 @@ import AppModal from "@/components/base/AppModal.vue";
 import { useSectionTabRoute } from "@/composables/useSectionTabRoute";
 import { toast } from "@/composables/useToast";
 import "@/styles/admin-shared.css";
+
+// [P2#7] LRU 配置键（与后端 domain.ConfigMediaLibraryMaxRows / KeepRows 对齐）
+const LRU_MAX_ROWS_KEY = "media_library_max_rows";
+const LRU_KEEP_ROWS_KEY = "media_library_keep_rows";
 
 // Phase 8 媒体配置页（§12.2/§27.4/§6.9/§9.7.1/§11.1）：
 // 能力预检 + 索引状态面板 + TMDB/盘搜/NAS 配置 + 健康检查。
@@ -95,6 +100,20 @@ const healthLogLevel = ref<number>(30); // 默认 WARNING
 // 健康检查"重扫索引"独立 busy 标志，避免与 OVERVIEW/INDEX_TAB 的 scanning 串扰
 const healthScanBusy = ref(false);
 
+// [P2#7] media_library LRU 配置 + 立即清理
+const lruMaxRows = ref<string>("5000");
+const lruKeepRows = ref<string>("3000");
+const lruEvictBusy = ref(false);
+// 初始化：从 configs 拉取当前值
+function syncLRUFromConfigs() {
+  if (configs.value?.[LRU_MAX_ROWS_KEY]) {
+    lruMaxRows.value = configs.value[LRU_MAX_ROWS_KEY];
+  }
+  if (configs.value?.[LRU_KEEP_ROWS_KEY]) {
+    lruKeepRows.value = configs.value[LRU_KEEP_ROWS_KEY];
+  }
+}
+
 const nasAvailable = computed(() => !!snapshot.value?.capabilities.nas_available);
 const nasIndexComplete = computed(() => !!snapshot.value?.capabilities.nas_index_complete);
 const pansearchAvailable = computed(() => !!snapshot.value?.capabilities.pansearch_available);
@@ -139,6 +158,8 @@ async function loadAll() {
   } finally {
     loading.value = false;
     nasLoading.value = false;
+    // [P2#7] 同步 LRU 配置到本地 ref
+    syncLRUFromConfigs();
   }
 }
 
@@ -302,6 +323,10 @@ async function saveConfig(key: string, value: string, label: string) {
   try {
     await saveXMediaConfig(key, value.trim());
     configs.value = { ...configs.value, [key]: value.trim() };
+    // [P2#7] 保存 LRU 配置后, 同步本地 ref
+    if (key === LRU_MAX_ROWS_KEY || key === LRU_KEEP_ROWS_KEY) {
+      syncLRUFromConfigs();
+    }
     toast.success(`${label}已保存`);
     await loadAll();
   } catch (e) {
@@ -395,6 +420,24 @@ async function openHealthLogs() {
 
 function closeHealthLogs() {
   healthLogModalOpen.value = false;
+}
+
+// ===== [P2#7] LRU 立即清理 =====
+
+async function triggerEvictNow() {
+  lruEvictBusy.value = true;
+  try {
+    const res = await tmdbEvict();
+    if (res.removed > 0) {
+      toast.success(`已淘汰 ${res.removed} 条（当前阈值: max=${res.max_rows ?? "?"} / keep=${res.keep_rows ?? "?"}）`);
+    } else {
+      toast.success("无需淘汰，库内条目未超过 max_rows");
+    }
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "LRU 淘汰失败"));
+  } finally {
+    lruEvictBusy.value = false;
+  }
 }
 
 function toneFor(status: string | undefined): "success" | "warning" | "danger" {
@@ -495,6 +538,52 @@ onUnmounted(() => {
               {{ scanning ? "扫描中…" : "增量扫描" }}
             </AppButton>
           </div>
+        </SettingsRow>
+      </SettingsCard>
+
+      <!-- [P2#7] media_library LRU 配置 + 立即清理 -->
+      <SettingsCard title="TMDB 媒体库 LRU 管理（§15.2）" :loading="loading">
+        <SettingsRow label="当前条目数">
+          <span class="settings-help">{{ indexedTotal }}</span>
+        </SettingsRow>
+        <SettingsRow label="上限 (max_rows)">
+          <AppInput
+            :model-value="lruMaxRows"
+            class="config-input"
+            placeholder="5000"
+            @update:model-value="lruMaxRows = String($event ?? '')"
+          />
+          <AppButton
+            type="button" size="sm" variant="ghost" class="row-action-btn"
+            :disabled="savingKey === LRU_MAX_ROWS_KEY"
+            @click="saveConfig(LRU_MAX_ROWS_KEY, lruMaxRows, '上限')"
+          >
+            {{ savingKey === LRU_MAX_ROWS_KEY ? "保存中…" : "保存" }}
+          </AppButton>
+        </SettingsRow>
+        <SettingsRow label="保留 (keep_rows)">
+          <AppInput
+            :model-value="lruKeepRows"
+            class="config-input"
+            placeholder="3000"
+            @update:model-value="lruKeepRows = String($event ?? '')"
+          />
+          <AppButton
+            type="button" size="sm" variant="ghost" class="row-action-btn"
+            :disabled="savingKey === LRU_KEEP_ROWS_KEY"
+            @click="saveConfig(LRU_KEEP_ROWS_KEY, lruKeepRows, '保留')"
+          >
+            {{ savingKey === LRU_KEEP_ROWS_KEY ? "保存中…" : "保存" }}
+          </AppButton>
+        </SettingsRow>
+        <SettingsRow label="操作">
+          <AppButton
+            type="button" variant="primary"
+            :disabled="lruEvictBusy" @click="triggerEvictNow"
+          >
+            {{ lruEvictBusy ? "清理中…" : "立即清理" }}
+          </AppButton>
+          <span class="settings-help row-action-btn">手动触发 LRU 淘汰（保护收藏/订阅/有播放记录）</span>
         </SettingsRow>
       </SettingsCard>
     </div>
