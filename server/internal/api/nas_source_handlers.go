@@ -144,6 +144,18 @@ func (h *Handler) createNASSource(w http.ResponseWriter, r *http.Request) {
 	if h.nasMountResolver != nil {
 		path = h.nasMountResolver.resolve(rawPath)
 	}
+	// [defensive] 若 resolve 未发生实际 rewrite（passthrough），
+	// 说明缺少 host->container 映射规则；此时禁止把主机路径静默入库，
+	// 否则 Capabilities/扫描会在容器内 os.Stat 失败。
+	// 已正确 rewrite 的路径不在此处阻断（容器挂载延迟由部署侧处理）。
+	if path == rawPath {
+		if info, err := os.Stat(path); err != nil || !info.IsDir() {
+			writeErr(w, domain.Errorf(domain.CodeValidation,
+				"路径 %q 在容器内不可访问，且未找到可用的主机路径映射；请先在「NAS 配置 → 主机路径映射」中添加 %q -> <容器路径> 的映射，或直接使用容器内路径（如 /mnt/nas-root/...）",
+				rawPath, rawPath))
+			return
+		}
+	}
 	if taken, err := repo.NameTaken(r.Context(), name, 0); err != nil {
 		writeErr(w, err)
 		return
@@ -222,6 +234,15 @@ func (h *Handler) updateNASSource(w http.ResponseWriter, r *http.Request) {
 		newPath := rawPath
 		if h.nasMountResolver != nil {
 			newPath = h.nasMountResolver.resolve(rawPath)
+		}
+		// [defensive] passthrough 且容器内不可达时拒绝，避免主机路径静默入库。
+		if newPath == rawPath {
+			if info, err := os.Stat(newPath); err != nil || !info.IsDir() {
+				writeErr(w, domain.Errorf(domain.CodeValidation,
+					"路径 %q 在容器内不可访问，且未找到可用的主机路径映射；请先在「NAS 配置 → 主机路径映射」中添加 %q -> <容器路径> 的映射，或直接使用容器内路径（如 /mnt/nas-root/...）",
+					rawPath, rawPath))
+				return
+			}
 		}
 		if taken, err := repo.PathTaken(r.Context(), newPath, id); err != nil {
 			writeErr(w, err)
