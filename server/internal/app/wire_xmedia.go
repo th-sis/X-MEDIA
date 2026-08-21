@@ -168,6 +168,10 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		}
 	}()
 
+	// [V7 §9.7.4 / §9.7.5] 启动 NAS 周期调度器（每周增量 + 每月全盘校验）。
+	// 随 app 生命周期启动/停止。
+	indexEngine.StartScheduler(context.Background())
+
 	// [A3] §20 订阅自动搜寻器（复用 resolve 的 P1 轻量探测）
 	subSearcher := resolve.NewSubscriptionSearcher(resolve.SubscriptionSearcherOptions{
 		Subscriptions: st.store.Subscriptions,

@@ -4,11 +4,19 @@ import { http, ApiError } from "./client";
 
 export interface Capabilities {
   nas_available: boolean;
+  nas_status: string; // [V7 §27.4] not_configured / ok / not_accessible
   nas_index_complete: boolean;
   nas_index_count: number;
+  nas_phase: string;
+  nas_processed_files: number;
+  nas_total_files: number;
+  nas_scanning: boolean;
+  nas_total_sources: number;
+  nas_enabled_sources: number;
   pansearch_available: boolean;
   logged_in_drivers: string[];
   magnet_enabled: boolean;
+  p0_min_score: number;
   demo_fallback: boolean;
   server_version: string;
 }

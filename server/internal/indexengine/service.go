@@ -2,6 +2,7 @@ package indexengine
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,6 +24,14 @@ type Service struct {
 	scanning bool
 	progress NASProgress
 	lastScan time.Time
+
+	// [V7 §9.7.4 / §9.7.5] NAS 周期调度器（增量/全盘校验）。
+	schedulerCtx     context.Context
+	schedulerCancel  context.CancelFunc
+	schedulerMu      sync.Mutex
+	schedulerStarted bool
+	lastIncrementalRun time.Time
+	lastFullScanRun    time.Time
 }
 
 // NASProgress 当前/最近一次 NAS 扫描进度（WS index_status 推送源，§9.7.1）。
@@ -213,4 +222,108 @@ func (s *Service) IndexFile(ctx context.Context, m *domain.MediaIndex) (int64, e
 // RemoveFile 删除单条索引（网盘文件删除联动，§9.3）。
 func (s *Service) RemoveFile(ctx context.Context, sourceType, filePath string) error {
 	return s.mediaIndex.DeleteBySourcePath(ctx, sourceType, filePath)
+}
+
+// StartScheduler 启动 NAS 周期任务（§9.7.4 每周增量 + §9.7.5 每月全盘校验）。
+// 幂等：多次调用仅启动一次；父 context 取消时自动退出。
+func (s *Service) StartScheduler(parentCtx context.Context) {
+	if s == nil {
+		return
+	}
+	s.schedulerMu.Lock()
+	if s.schedulerStarted {
+		s.schedulerMu.Unlock()
+		return
+	}
+	s.schedulerCtx, s.schedulerCancel = context.WithCancel(parentCtx)
+	s.schedulerStarted = true
+	s.schedulerMu.Unlock()
+	go s.nasSchedulerLoop()
+}
+
+// StopScheduler 停止 NAS 周期调度器（应用关闭时调用）。
+func (s *Service) StopScheduler() {
+	s.schedulerMu.Lock()
+	if !s.schedulerStarted {
+		s.schedulerMu.Unlock()
+		return
+	}
+	s.schedulerStarted = false
+	if s.schedulerCancel != nil {
+		s.schedulerCancel()
+	}
+	s.schedulerMu.Unlock()
+}
+
+func (s *Service) nasSchedulerLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+	s.scheduleTick()
+	for {
+		select {
+		case <-s.schedulerCtx.Done():
+			return
+		case <-ticker.C:
+			s.scheduleTick()
+		}
+	}
+}
+
+func (s *Service) scheduleTick() {
+	ctx := context.Background()
+	now := time.Now()
+
+	// 每周增量扫描（§9.7.4）
+	if s.shouldRunEveryNDays(ctx, domain.ConfigNASIncrementalDay, now, &s.lastIncrementalRun) {
+		_ = s.ScanNASIncremental(ctx)
+		s.lastIncrementalRun = now
+	}
+
+	// 每月全盘校验（§9.7.5，默认关闭——空值/0 时 shouldRunMonthly 直接返回 false）
+	if s.shouldRunMonthly(ctx, domain.ConfigNASFullScanDay, now, &s.lastFullScanRun) {
+		_ = s.ScanNASFull(ctx)
+		s.lastFullScanRun = now
+	}
+}
+
+func (s *Service) shouldRunEveryNDays(ctx context.Context, configKey string, now time.Time, lastRun *time.Time) bool {
+	if s.configs == nil {
+		return false
+	}
+	dayStr, ok, err := s.configs.Get(ctx, configKey)
+	if err != nil || !ok {
+		return false
+	}
+	n, err := strconv.Atoi(dayStr)
+	if err != nil || n <= 0 {
+		return false
+	}
+	if lastRun == nil || lastRun.IsZero() {
+		return true
+	}
+	return now.Sub(*lastRun) >= time.Duration(n)*24*time.Hour
+}
+
+func (s *Service) shouldRunMonthly(ctx context.Context, configKey string, now time.Time, lastRun *time.Time) bool {
+	if s.configs == nil {
+		return false
+	}
+	dayStr, ok, err := s.configs.Get(ctx, configKey)
+	if err != nil || !ok {
+		return false
+	}
+	targetDay, err := strconv.Atoi(dayStr)
+	if err != nil || targetDay <= 0 || targetDay > 31 {
+		return false
+	}
+	if now.Day() != targetDay {
+		return false
+	}
+	if lastRun == nil || lastRun.IsZero() {
+		return true
+	}
+	if lastRun.Year() == now.Year() && lastRun.Month() == now.Month() && lastRun.Day() == now.Day() {
+		return false
+	}
+	return true
 }

@@ -520,3 +520,71 @@ func TestScanNASBackfillsFileCount(t *testing.T) {
 		}
 	}
 }
+
+// TestNASStartScheduler 验证 StartScheduler 不 panic 且可停止。
+func TestNASStartScheduler(t *testing.T) {
+	s := NewService(Options{})
+	s.StartScheduler(context.Background())
+	s.StartScheduler(context.Background()) // 幂等
+	time.Sleep(2 * time.Second)
+	s.StopScheduler()
+	s.StopScheduler() // 幂等
+}
+
+// TestNASShouldRunEveryNDays 验证"每 N 天"调度条件。
+func TestNASShouldRunEveryNDays(t *testing.T) {
+	now := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name      string
+		cfgValues map[string]string
+		lastRun   time.Time
+		want      bool
+	}{
+		{"no config", map[string]string{}, time.Time{}, false},
+		{"invalid n", map[string]string{domain.ConfigNASIncrementalDay: "abc"}, time.Time{}, false},
+		{"first run", map[string]string{domain.ConfigNASIncrementalDay: "7"}, time.Time{}, true},
+		{"just ran", map[string]string{domain.ConfigNASIncrementalDay: "7"}, now, false},
+		{"7 days later", map[string]string{domain.ConfigNASIncrementalDay: "7"}, now.Add(-7*24*time.Hour - time.Minute), true},
+		{"6 days later", map[string]string{domain.ConfigNASIncrementalDay: "7"}, now.Add(-6*24*time.Hour), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewService(Options{
+				Configs: &memoryConfigRepo{values: tc.cfgValues},
+			})
+			got := s.shouldRunEveryNDays(context.Background(), domain.ConfigNASIncrementalDay, now, &tc.lastRun)
+			if got != tc.want {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNASShouldRunMonthly 验证"每月固定日期"调度条件。
+func TestNASShouldRunMonthly(t *testing.T) {
+	now := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name      string
+		cfgValues map[string]string
+		now       time.Time
+		lastRun   time.Time
+		want      bool
+	}{
+		{"no config", map[string]string{}, now, time.Time{}, false},
+		{"invalid day", map[string]string{domain.ConfigNASFullScanDay: "abc"}, now, time.Time{}, false},
+		{"target day first run", map[string]string{domain.ConfigNASFullScanDay: "15"}, now, time.Time{}, true},
+		{"target day already ran", map[string]string{domain.ConfigNASFullScanDay: "15"}, now, now, false},
+		{"non target day", map[string]string{domain.ConfigNASFullScanDay: "15"}, now.AddDate(0, 0, 1), time.Time{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := NewService(Options{
+				Configs: &memoryConfigRepo{values: tc.cfgValues},
+			})
+			got := s.shouldRunMonthly(context.Background(), domain.ConfigNASFullScanDay, tc.now, &tc.lastRun)
+			if got != tc.want {
+				t.Errorf("got %v, want %v (now=%v lastRun=%v cfg=%v)", got, tc.want, tc.now, tc.lastRun, tc.cfgValues)
+			}
+		})
+	}
+}

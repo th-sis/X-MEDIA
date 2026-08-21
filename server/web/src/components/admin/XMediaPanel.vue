@@ -114,7 +114,20 @@ function syncLRUFromConfigs() {
   }
 }
 
-const nasAvailable = computed(() => !!snapshot.value?.capabilities.nas_available);
+// [V7 §27.4] NAS 三态：not_configured / ok / not_accessible
+const nasStatus = computed(() => snapshot.value?.capabilities.nas_status || "not_configured");
+const nasStatusTone = computed(() => {
+  if (nasStatus.value === "ok") return "success";
+  if (nasStatus.value === "not_accessible") return "danger";
+  return "warning";
+});
+const nasStatusLabel = computed(() => {
+  switch (nasStatus.value) {
+    case "ok": return "已配置且可访问";
+    case "not_accessible": return "路径不可访问";
+    default: return "未配置 NAS";
+  }
+});
 const nasIndexComplete = computed(() => !!snapshot.value?.capabilities.nas_index_complete);
 const pansearchAvailable = computed(() => !!snapshot.value?.capabilities.pansearch_available);
 const indexProgress = computed(() => snapshot.value?.index_progress ?? null);
@@ -471,9 +484,9 @@ onUnmounted(() => {
 
     <div v-show="activeTab === OVERVIEW_TAB">
       <SettingsCard title="能力预检（§6.3）" :loading="loading">
-        <SettingsRow label="NAS 可用">
-          <AdminStatusPill :tone="nasAvailable ? 'success' : 'warning'">
-            {{ nasAvailable ? "可用" : "不可用" }}
+        <SettingsRow label="NAS 状态（§27.4）">
+          <AdminStatusPill :tone="nasStatusTone">
+            {{ nasStatusLabel }}
           </AdminStatusPill>
         </SettingsRow>
         <SettingsRow label="NAS 索引完成">
@@ -850,6 +863,14 @@ onUnmounted(() => {
             type="button" size="sm" variant="ghost" class="row-action-btn"
             @click="goToTab(PANSEARCH_TAB)"
           >
+            去配置
+          </AppButton>
+        </SettingsRow>
+        <SettingsRow label="NAS 状态（§27.4）">
+          <AdminStatusPill :tone="nasStatusTone">
+            {{ nasStatusLabel }}
+          </AdminStatusPill>
+          <AppButton type="button" size="sm" variant="ghost" class="row-action-btn" @click="goToTab(NAS_TAB)">
             去配置
           </AppButton>
         </SettingsRow>
