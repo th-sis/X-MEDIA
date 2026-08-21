@@ -96,8 +96,10 @@ const loggedInDrivers = computed(() => xMediaSnapshot.value?.logged_in_drivers ?
 // V7 §27.1：优先用 snapshot 实时状态（启动快照可能过时），health validation 仅作降级消息源。
 const tmdbStatus = computed(() => xMediaHealth.value?.validation?.tmdb_key?.status ?? "unknown");
 const pansearchStatus = computed(() => {
-  if (xMediaSnapshot.value?.pansearch_available) return "ok";
-  return xMediaHealth.value?.validation?.pansearch_url?.status ?? "unknown";
+  // [fix] /health 返回的是启动时 validation_last_result 静态缓存，
+  // 不能代表当前实时状态；PanSou 可用性必须以实时 snapshot 为准，
+  // 否则会与 XMediaPanel 能力预检页显示不一致。
+  return xMediaSnapshot.value?.pansearch_available ? "ok" : "unknown";
 });
 const accountStatus = computed(() => {
   if (loggedInDrivers.value.length > 0) return "ok";
@@ -112,7 +114,7 @@ const indexOk = computed(() => nasIndexComplete.value);
 
 const healthyChips = computed(() => [
   { key: "tmdb", label: "TMDB", ok: tmdbOk.value, message: tmdbOk.value ? "已连接" : (xMediaHealth.value?.validation?.tmdb_key?.message ?? "未配置") },
-  { key: "pansearch", label: "PanSou", ok: pansearchOk.value, message: pansearchOk.value ? "可用" : (xMediaHealth.value?.validation?.pansearch_url?.message ?? "不可达") },
+  { key: "pansearch", label: "PanSou", ok: pansearchOk.value, message: pansearchOk.value ? "可用" : "不可达" },
   { key: "account", label: "网盘账号", ok: accountOk.value, message: accountOk.value ? `${loggedInDrivers.value.length} 个已登录` : (loggedInDrivers.value.length === 0 ? "未登录" : `${loggedInDrivers.value.length} 个已登录`) },
   { key: "nas", label: "NAS", ok: nasOk.value, message: nasOk.value ? "可用" : "未配置" },
   { key: "index", label: "索引", ok: indexOk.value, message: indexOk.value ? "已完成" : "未完成" },
