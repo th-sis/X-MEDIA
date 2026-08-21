@@ -78,6 +78,93 @@ func (m *memoryLibraryRepo) ListForEviction(context.Context, int) ([]*domain.Med
 func (m *memoryLibraryRepo) CountTotal(context.Context) (int, error) { return 0, nil }
 func (m *memoryLibraryRepo) Delete(context.Context, int64) error     { return nil }
 
+// memoryNASSourcesRepo 内存版 NASSource 仓库（[G4] file_count 回填测试用）。
+type memoryNASSourcesRepo struct {
+	items     map[int64]*domain.NASSource
+	healthLog map[int64]struct {
+		acc   domain.NASAccessibility
+		count int64
+		at    time.Time
+	}
+	nextID int64
+}
+
+func newMemoryNASSourcesRepo() *memoryNASSourcesRepo {
+	return &memoryNASSourcesRepo{
+		items:     map[int64]*domain.NASSource{},
+		healthLog: map[int64]struct {
+			acc   domain.NASAccessibility
+			count int64
+			at    time.Time
+		}{},
+	}
+}
+
+func (m *memoryNASSourcesRepo) Create(_ context.Context, s *domain.NASSource) (int64, error) {
+	m.nextID++
+	s.ID = m.nextID
+	cp := *s
+	m.items[s.ID] = &cp
+	return s.ID, nil
+}
+func (m *memoryNASSourcesRepo) Update(_ context.Context, s *domain.NASSource) error {
+	cp := *s
+	m.items[s.ID] = &cp
+	return nil
+}
+func (m *memoryNASSourcesRepo) Delete(_ context.Context, id int64) error {
+	delete(m.items, id)
+	return nil
+}
+func (m *memoryNASSourcesRepo) Get(_ context.Context, id int64) (*domain.NASSource, error) {
+	v, ok := m.items[id]
+	if !ok {
+		return nil, domain.Errf(domain.CodeNotFound)
+	}
+	cp := *v
+	return &cp, nil
+}
+func (m *memoryNASSourcesRepo) List(_ context.Context) ([]*domain.NASSource, error) {
+	out := make([]*domain.NASSource, 0, len(m.items))
+	for _, v := range m.items {
+		cp := *v
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+func (m *memoryNASSourcesRepo) ListEnabled(ctx context.Context) ([]*domain.NASSource, error) {
+	return m.List(ctx)
+}
+func (m *memoryNASSourcesRepo) PathTaken(_ context.Context, path string, _ int64) (bool, error) {
+	for _, v := range m.items {
+		if v.Path == path {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *memoryNASSourcesRepo) NameTaken(_ context.Context, name string, _ int64) (bool, error) {
+	for _, v := range m.items {
+		if v.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *memoryNASSourcesRepo) UpdateHealth(_ context.Context, id int64, acc domain.NASAccessibility, count int64, at time.Time) error {
+	m.healthLog[id] = struct {
+		acc   domain.NASAccessibility
+		count int64
+		at    time.Time
+	}{acc, count, at}
+	if v, ok := m.items[id]; ok {
+		v.LastAccessibility = acc
+		v.FileCount = count
+		v.LastCheckedAt = &at
+	}
+	return nil
+}
+
 // memoryConfigRepo 内存版 Config 仓库。
 type memoryConfigRepo struct {
 	values map[string]string
@@ -352,5 +439,84 @@ func TestCleanupSkipsRecentlyPlayed(t *testing.T) {
 	}
 	if n, _ := index.Count(ctx); n != 1 {
 		t.Fatalf("清理后应剩 1 条，实际 %d", n)
+	}
+}
+
+// TestScanNASBackfillsFileCount [G4 修正] V7 §9.4+: ScanNASFull 完成后
+// 应自动调 nasSources.UpdateHealth 回填 file_count (与 WalkDir+IsVideoFile 同口径).
+// 这是 4 个顶级分类目录 (Asia-Movie/West-Movie/Documentary/X-RATED) 部署后
+// file_count 一直显示 0 的根因 — 老实现不调 UpdateHealth.
+func TestScanNASBackfillsFileCount(t *testing.T) {
+	// 构造模拟 NAS 顶级分类目录: 一级都是子目录, 视频文件埋在 2 级
+	root := t.TempDir()
+	for _, subdir := range []string{"Asia-Movie", "West-Movie"} {
+		for _, movie := range []string{
+			"Inception (2010)/movie.mkv",
+			"Avatar (2009)/disc1.mkv",
+			"Avatar (2009)/disc2.mp4",
+			"说明.txt",
+		} {
+			full := filepath.Join(root, subdir, movie)
+			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+				t.Fatalf("创建目录失败: %v", err)
+			}
+			if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+				t.Fatalf("写文件失败: %v", err)
+			}
+		}
+	}
+	// 期望: 每个 subdir 有 3 个视频 (.mkv/.mkv/.mp4) + 1 个 .txt (非视频)
+	// 即每个 source.file_count 应 = 3
+
+	nas := newMemoryNASSourcesRepo()
+	for _, subdir := range []string{"Asia-Movie", "West-Movie"} {
+		_, err := nas.Create(context.Background(), &domain.NASSource{
+			Name: subdir, Path: filepath.Join(root, subdir), Enabled: true,
+		})
+		if err != nil {
+			t.Fatalf("Create 失败: %v", err)
+		}
+	}
+
+	index := newMemoryIndexRepo()
+	s := NewService(Options{
+		MediaIndex:   index,
+		MediaLibrary: &memoryLibraryRepo{},
+		Configs:      &memoryConfigRepo{values: map[string]string{}},
+		NASSources:   nas,
+		WorkerCount:  2,
+	})
+
+	// 同步直接调 scanNAS 避免 goroutine 调度 race (ScanNASFull 内部 go s.scanNAS,
+	// 测试等待循环可能错过 scanning=true 的窗口).
+	sources, _ := nas.List(context.Background())
+	paths := make([]string, 0, len(sources))
+	for _, src := range sources {
+		paths = append(paths, src.Path)
+	}
+	s.scanNAS(context.Background(), paths, false)
+
+	// 验证: 2 个 source 都被回填, 每个 file_count = 3
+	sources, _ = nas.List(context.Background())
+	if len(sources) != 2 {
+		t.Fatalf("应有 2 个 source, 实际 %d", len(sources))
+	}
+	for _, src := range sources {
+		health, ok := nas.healthLog[src.ID]
+		if !ok {
+			t.Fatalf("source %d (%s) 未被回填 health (UpdateHealth 未调用)", src.ID, src.Name)
+		}
+		if health.acc != domain.NASAccessibilityOK {
+			t.Fatalf("source %s 路径应可访问, 实际 %s", src.Name, health.acc)
+		}
+		if health.count != 3 {
+			t.Fatalf("source %s 应数 3 个视频文件, 实际 %d", src.Name, health.count)
+		}
+		if src.FileCount != 3 {
+			t.Fatalf("source %s FileCount 字段应=3, 实际 %d", src.Name, src.FileCount)
+		}
+		if src.LastCheckedAt == nil {
+			t.Fatalf("source %s LastCheckedAt 应被设置", src.Name)
+		}
 	}
 }
