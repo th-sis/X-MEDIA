@@ -2,6 +2,7 @@ package resolve
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -310,6 +311,74 @@ func TestRunP1InvalidLinksSkipped(t *testing.T) {
 	if len(drv.saved) != 0 {
 		t.Fatalf("失效链接不应触发转存")
 	}
+}
+
+// [V7 §6.4 / §27.4] A2: 转存阶段 SaveShare 失败必须显式上报 (StageSaveFailed)
+// + ErrorMsg 记录最近错误, 防止 20 条全失败用户只见 not_found 不知根因.
+func TestRunP1SaveFailuresReported(t *testing.T) {
+	s, _, tasks, _, drv := newTestService(t)
+	drv.saveErr = domain.Errorf(domain.CodeInternal, "网盘返回 401 鉴权失败")
+
+	task := newTestTask()
+	ok := s.runP1(context.Background(), task)
+	if ok {
+		t.Fatalf("转存全部失败时 P1 应返回 false")
+	}
+	if task.ErrorMsg == "" {
+		t.Fatalf("task.ErrorMsg 应记录最近错误细节, got 空")
+	}
+	if !strings.Contains(task.ErrorMsg, "401") {
+		t.Fatalf("task.ErrorMsg 应包含驱动错误内容, got %q", task.ErrorMsg)
+	}
+	// 断言 push 序列中出现 StageSaveFailed.
+	sawSaveFailed := false
+	for _, u := range tasks.updated {
+		if u.Stage == domain.StageSaveFailed {
+			sawSaveFailed = true
+			if !strings.Contains(u.StageDetail, "转存") {
+				t.Fatalf("StageSaveFailed detail 应说明转存失败, got %q", u.StageDetail)
+			}
+		}
+	}
+	if !sawSaveFailed {
+		t.Fatalf("P1 应在转存失败累计后 push StageSaveFailed, 实际 push 序列: %v", stageSeq(tasks.updated))
+	}
+}
+
+// [V7 §6.4 / §27.4] A3: 无网盘账号时 runP1 必须显式 StageNoAccount,
+// 让 §27.4 健康面板可以显示"请先登录网盘账号"操作按钮, 而非静默 not_found.
+func TestRunP1NoAccountReported(t *testing.T) {
+	s, _, tasks, _, _ := newTestService(t, func(s *Service) {
+		s.accountsFn = func(context.Context) []domain.Account { return nil }
+		s.driverGet = func(context.Context, int64) (driver.Driver, error) {
+			t.Fatal("无账号时不应查驱动")
+			return nil, nil
+		}
+	})
+
+	task := newTestTask()
+	ok := s.runP1(context.Background(), task)
+	if ok {
+		t.Fatalf("无账号时 P1 应返回 false")
+	}
+	sawNoAccount := false
+	for _, u := range tasks.updated {
+		if u.Stage == domain.StageNoAccount {
+			sawNoAccount = true
+		}
+	}
+	if !sawNoAccount {
+		t.Fatalf("P1 应 push StageNoAccount, 实际: %v", stageSeq(tasks.updated))
+	}
+}
+
+// stageSeqP 把 push 序列翻译为人类可读串用于失败断言信息.
+func stageSeq(updates []*domain.ResolveTask) []string {
+	out := make([]string, 0, len(updates))
+	for _, u := range updates {
+		out = append(out, string(u.Stage))
+	}
+	return out
 }
 
 func TestRunP2MagnetCompleted(t *testing.T) {

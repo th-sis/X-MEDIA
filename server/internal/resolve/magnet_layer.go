@@ -24,6 +24,8 @@ func (s *Service) runP2(ctx context.Context, t *domain.ResolveTask) bool {
 			}
 		}
 		if !ok {
+			// [V7 §6.4 / §27.4] A3: 账号空也显式汇报, 让 UI 显示"请先登录网盘账号"操作.
+			s.push(t, domain.StageNoAccount, "未配置网盘账号，无法进行 P2 磁力兜底", 0)
 			return false
 		}
 	}

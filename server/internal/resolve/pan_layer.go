@@ -112,10 +112,13 @@ func pansearchCloudTypes(sources []string) []string {
 func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 	priority := s.prioritySources(ctx)
 	if len(priority) == 0 {
+		s.push(t, domain.StageNoAccount, "未配置网盘优先级，无法盘搜", 0)
 		return false
 	}
 	accounts := s.activeAccounts(ctx)
 	if len(accounts) == 0 {
+		// [V7 §6.4 / §27.4] A3: 显式汇报, 让 UI 显示"请先登录网盘账号"操作.
+		s.push(t, domain.StageNoAccount, "未配置网盘账号，无法盘搜", 0)
 		return false
 	}
 	var media *domain.MediaLibrary
@@ -150,6 +153,10 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 		// CheckLinks 批量检测（取前 20 条）
 		valid := s.checkResults(ctx, results)
 		saved := false
+		// [V7 §6.4 / §27.4] A2: 累计转存失败次数, 跑完后汇报, 防止 20 条全失败时
+		// 用户只见 not_found 不知发生了什么. 保留每次 continue 的 errno 细节到任务.
+		failedTransfers := 0
+		var lastErr error
 		for _, r := range results {
 			if !valid[r.ShareURL] {
 				continue
@@ -169,6 +176,8 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 			s.push(t, domain.StageTransferring, fmt.Sprintf("正在转存到 %s ...", r.Source), 70)
 			parent, err := s.ensureSaveRoot(ctx, drv, acc.ID, r.Source)
 			if err != nil {
+				failedTransfers++
+				lastErr = err
 				continue
 			}
 			savedRes, err := saver.SaveShare(ctx, driver.ShareRequest{
@@ -177,7 +186,13 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 				TargetParentID: parent,
 			})
 			if err != nil || savedRes == nil {
-				continue // 转存失败：下一个结果
+				failedTransfers++
+				if err != nil {
+					lastErr = err
+				} else if savedRes == nil {
+					lastErr = domain.Errorf(domain.CodeInternal, "转存驱动返回空结果")
+				}
+				continue // A2: 此处不再静默 — 计入失败计数 + 保留 err
 			}
 			// [V7 §6.9.2] 转存成功后, 把文件名改写为统一模板
 			// (失败时静默, 不影响 P1 命中 — 见 post_rename.go).
@@ -195,6 +210,18 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 		}
 		if saved {
 			return true
+		}
+		// [V7 §6.4 / §27.4] A2: 整个关键词批次都没成功转存, 汇报失败统计让 UI 显示原因.
+		if failedTransfers > 0 {
+			detail := fmt.Sprintf("%d 个候选资源转存全部失败", failedTransfers)
+			if lastErr != nil {
+				detail += " (最近错误: " + lastErr.Error() + ")"
+			}
+			s.push(t, domain.StageSaveFailed, detail, 72)
+			if t.ErrorMsg == "" && lastErr != nil {
+				t.ErrorMsg = "转存失败: " + lastErr.Error()
+				_ = s.tasks.Update(context.Background(), t)
+			}
 		}
 	}
 	return false
