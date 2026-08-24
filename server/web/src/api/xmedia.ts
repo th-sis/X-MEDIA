@@ -169,12 +169,16 @@ export interface NASReresolveItem {
   new_path: string;
   source: NASResolveSource;
   changed: boolean;
+  // [实测增强] 改写后的即时可达性 — 点击后无需等周期监测即可看状态变化
+  accessible?: "ok" | "not_accessible";
   error?: string;
 }
 export interface NASReresolveResult {
   total: number;
   changed: number;
   results: NASReresolveItem[];
+  // 容器无 SMB 挂载时非空：精确部署指引（Docker volume 只能创建时挂载）
+  deploy_hint?: string;
 }
 export function reresolveNASPaths(): Promise<NASReresolveResult> {
   return http.post<NASReresolveResult>("/admin/nas-sources/reresolve", {});

@@ -2,6 +2,7 @@ package indexengine
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -164,13 +165,36 @@ func (s *Service) scanNAS(ctx context.Context, roots []string, incremental bool)
 		})
 	}
 
-	// 推送全局汇总进度（Root="" 表示汇总）
-	s.pushProgress(NASProgress{
-		Scope: "nas", Root: "", Phase: "B", Status: "done",
-		Processed: int(totalProcessed.Load()), Total: totalFiles,
-		Matched: int(totalMatched.Load()), Unconfirmed: int(totalUnconfirmed.Load()),
-		Orphaned: int(totalOrphaned.Load()),
-	})
+	// 推送全局汇总进度（Root="" 表示汇总）。
+	// [V7 §9.7.1 实测回归] 全量扫描全部 root 不可达时不得静默 done —
+	// 真机曾出现"扫描无反应"（done/0 文件/空 error_msg）。
+	// 注意: 增量扫描"无新文件"(mtime 过滤后 n=0) 是常态, 且后续 Phase D
+	// 清理仍必须执行 — 因此这里只改写汇总状态, 绝不提前 return.
+	allRootsMissingMsg := ""
+	if totalFiles == 0 && !incremental {
+		failedRoots := 0
+		for _, root := range roots {
+			if _, err := os.Stat(root); err != nil {
+				failedRoots++
+			}
+		}
+		if failedRoots == len(roots) {
+			allRootsMissingMsg = fmt.Sprintf("%d 个媒体源路径在容器内均不可达（可能未挂载 NAS 卷，见 NAS 配置页诊断）", len(roots))
+		}
+	}
+	if allRootsMissingMsg != "" {
+		s.pushProgress(NASProgress{
+			Scope: "nas", Root: "", Phase: "B", Status: "failed",
+			ErrorMsg: allRootsMissingMsg,
+		})
+	} else {
+		s.pushProgress(NASProgress{
+			Scope: "nas", Root: "", Phase: "B", Status: "done",
+			Processed: int(totalProcessed.Load()), Total: totalFiles,
+			Matched: int(totalMatched.Load()), Unconfirmed: int(totalUnconfirmed.Load()),
+			Orphaned: int(totalOrphaned.Load()),
+		})
+	}
 
 	if incremental {
 		// 增量扫描：每条路径独立清理消失文件
@@ -183,6 +207,15 @@ func (s *Service) scanNAS(ctx context.Context, roots []string, incremental bool)
 		}
 	}
 	s.runPhaseC(ctx)
+
+	// [实测回归] runPhaseC 收尾会无条件推 done; 全部 root 不可达的失败终态
+	// 必须在其之后补推, 否则被覆盖 → 界面又回到"无反应".
+	if allRootsMissingMsg != "" {
+		s.pushProgress(NASProgress{
+			Scope: "nas", Root: "", Phase: "C", Status: "failed",
+			ErrorMsg: allRootsMissingMsg,
+		})
+	}
 
 	// [G4 修正] V7 §9.4+ 设计意图: nas_sources.file_count 是 cache,
 	// 应在扫描完成后回填, 让 admin UI 看到真实视频文件数.

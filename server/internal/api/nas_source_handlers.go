@@ -127,21 +127,27 @@ type reresolveResult struct {
 	New     string `json:"new_path"`
 	Source  string `json:"source"`
 	Changed bool   `json:"changed"`
-	Error   string `json:"error,omitempty"`
+	// Accessible 改写后的即时可达性 (ok/not_accessible) — 让前端点击后
+	// 无需等 5 分钟周期监测即可看到状态变化.
+	Accessible string `json:"accessible,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // reresolveAllPaths [V7 §9.4 UI-first] 对全部 NAS source 的存量 path 重新走
 // 一遍映射改写 — 用于修复历史版本入库的主机视角路径 (如 /mnt/BTORAGE/*),
-// 用户无需逐条手工编辑. 只改写, 不触碰 enabled/file_count 等字段.
-func (h *Handler) reresolveAllPaths(ctx context.Context) []reresolveResult {
+// 用户无需逐条手工编辑. 只改写, 不触碰 enabled 等字段.
+// 每条改写成功后立即 stat 并回写 last_accessibility; 容器无 SMB 挂载时
+// 返回的 deployHint 非空 (Docker volume 只能创建时挂载, 给出精确命令).
+func (h *Handler) reresolveAllPaths(ctx context.Context) ([]reresolveResult, string) {
 	out := []reresolveResult{}
 	if h.nasSources == nil || h.nasMountResolver == nil {
-		return out
+		return out, ""
 	}
 	list, err := h.nasSources.List(ctx)
 	if err != nil {
-		return out
+		return out, ""
 	}
+	now := time.Now()
 	for _, src := range list {
 		item := reresolveResult{ID: src.ID, Name: src.Name, Old: src.Path, New: src.Path}
 		newPath, source := h.nasMountResolver.resolveWithSource(src.Path)
@@ -157,9 +163,20 @@ func (h *Handler) reresolveAllPaths(ctx context.Context) []reresolveResult {
 				h.nasMountResolver.persistDerivedMapping(ctx, src.Path, newPath)
 			}
 		}
+		// 即时健康回写: 无论是否改写, 都按当前 path stat 一次,
+		// 让列表「可访问」列与本次操作同步刷新.
+		cur, gerr := h.nasSources.Get(ctx, src.ID)
+		if gerr == nil && cur != nil {
+			acc := domain.NASAccessibilityNotAccessible
+			if info, serr := os.Stat(cur.Path); serr == nil && info.IsDir() {
+				acc = domain.NASAccessibilityOK
+			}
+			item.Accessible = string(acc)
+			_ = h.nasSources.UpdateHealth(ctx, cur.ID, acc, cur.FileCount, now)
+		}
 		out = append(out, item)
 	}
-	return out
+	return out, h.nasMountResolver.deployHint()
 }
 
 // nasSourceView 是返回给前端的展示态（[V7 §9.4+ 扩展] G1.C，G18 UI 用）。
@@ -290,15 +307,21 @@ func (h *Handler) createNASSource(w http.ResponseWriter, r *http.Request) {
 // nasSourceReresolveAll POST /api/admin/nas-sources/reresolve
 // [V7 §9.4 UI-first] 存量 source 路径批量重映射：历史版本入库的主机视角路径
 // (/mnt/BTORAGE/*) 一键改写为容器内路径，无需逐条手工编辑。
+// 容器无 SMB 挂载时返回 deploy_hint，前端据此展示部署指引。
 func (h *Handler) nasSourceReresolveAll(w http.ResponseWriter, r *http.Request) {
-	results := h.reresolveAllPaths(r.Context())
+	results, deployHint := h.reresolveAllPaths(r.Context())
 	changed := 0
 	for _, it := range results {
 		if it.Changed {
 			changed++
 		}
 	}
-	writeOK(w, map[string]any{"total": len(results), "changed": changed, "results": results})
+	writeOK(w, map[string]any{
+		"total":       len(results),
+		"changed":     changed,
+		"results":     results,
+		"deploy_hint": deployHint,
+	})
 }
 
 func (h *Handler) updateNASSource(w http.ResponseWriter, r *http.Request) {

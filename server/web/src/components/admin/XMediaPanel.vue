@@ -141,6 +141,29 @@ const nasInaccessibleCount = computed(
   () => nasSources.value.filter((s) => s.last_accessibility === "not_accessible").length,
 );
 
+// [实测回归 重新设计] 系统诊断三态 — NAS 配置页顶部诊断卡的依据：
+//   no_mount   容器内无任何 SMB 挂载 → 展示部署三步指令（Docker 硬约束，
+//              volume 只能容器创建时挂载，忘设变量时这是唯一断点）
+//   fixable    已挂载但存在不可达源 → 「一键修复」(reresolve 会即时回写健康)
+//   ok         全部可达
+const mountDetectedCount = computed(() => nasDetected.value.length);
+const diagState = computed<"no_mount" | "fixable" | "ok" | "empty">(() => {
+  if (nasSources.value.length === 0) return "empty";
+  if (mountDetectedCount.value === 0) return "no_mount";
+  if (nasInaccessibleCount.value > 0) return "fixable";
+  return "ok";
+});
+const deployHintText =
+  'export NAS_MEDIA_PATH=/mnt/BTORAGE\ndocker compose pull && docker compose up -d --force-recreate xmedia';
+async function copyDeployHint() {
+  try {
+    await navigator.clipboard.writeText(deployHintText);
+    toast.success("已复制部署命令");
+  } catch {
+    toast.error("复制失败，请手动选择文本复制");
+  }
+}
+
 let pollTimer: number | null = null;
 
 async function loadAll() {
@@ -336,22 +359,33 @@ function sourceLabel(source: NASResolveResult["source"] | undefined): string {
   return "原样透传";
 }
 
-// [76007b2 UI-first] 存量路径批量重映射：历史宿主视角路径一键改写。
+// [76007b2 UI-first] 存量路径批量重映射；后端会即时回写可达性。
+// deploy_hint 非空 = 容器无挂载，此时改写无从谈起 → 持久警告而非 success。
+// 成功后 loadAll() 刷新 snapshot+sources+mounts，三个页面口径同步。
 async function runReresolve() {
   nasReresolveBusy.value = true;
   try {
     const res = await reresolveNASPaths();
-    const list = await fetchNASSources();
-    nasSources.value = list;
-    if (res.changed > 0) {
-      toast.success(`已重映射 ${res.changed}/${res.total} 个源路径，列表已刷新`);
+    if (res.deploy_hint) {
+      toast.warning(`NAS 卷未挂载，无法映射。请在 NAS 主机执行：${res.deploy_hint}`);
+    } else if (res.changed > 0) {
+      toast.success(`已重映射 ${res.changed}/${res.total} 个源路径并刷新可达性`);
     } else {
       toast.info(`全部 ${res.total} 个源路径无需改写`);
+    }
+    // 若改写后仍有不可达（物理上确实不存在），顺手跑一次带文件数统计的检测。
+    if (!res.deploy_hint && nasInaccessibleCount.value >= 0 && res.changed > 0) {
+      try {
+        await bulkNASHealth();
+      } catch {
+        /* 统计失败不影响主流程 */
+      }
     }
   } catch (e) {
     toast.error(getApiErrorMessage(e, "批量重映射失败"));
   } finally {
     nasReresolveBusy.value = false;
+    await loadAll(); // snapshot/sources/mounts 三者同步，消除页面间口径差
   }
 }
 
@@ -520,8 +554,11 @@ onUnmounted(() => {
             <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
               {{ nasReresolveBusy ? "重映射中…" : "批量重新映射存量路径" }}
             </AppButton>
-            <AppButton type="button" variant="ghost" @click="goToTab(NAS_TAB)">去 NAS 配置</AppButton>
+            <AppButton type="button" variant="ghost" @click="goToTab(NAS_TAB)">去 NAS 诊断</AppButton>
           </div>
+          <p class="row-hint" v-if="nasStatus === 'not_accessible'">
+            若刚完成部署且尚未挂载 NAS 卷，请先到「NAS 配置」页按顶部诊断卡的命令执行。
+          </p>
         </SettingsRow>
         <SettingsRow label="NAS 索引完成">
           <AdminStatusPill :tone="nasIndexComplete ? 'success' : 'warning'">
@@ -685,7 +722,59 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === NAS_TAB">
-      <!-- [V7 §9.4+ 扩展 G18] 主机路径 → 容器路径 映射管理卡片 -->
+      <!-- [实测回归·重新设计] 系统诊断卡：把"为什么不可用"和"下一步做什么"放在页面 C 位 -->
+      <SettingsCard title="NAS 系统诊断">
+        <!-- 状态一：容器未挂载 NAS 卷 → 部署三步指令（唯一需要部署侧做的事） -->
+        <div v-if="diagState === 'no_mount'" class="nas-diag nas-diag--danger">
+          <p class="nas-diag__title">
+            <i class="fas fa-triangle-exclamation" />
+            容器内未检测到任何 NAS 挂载 — 这是一切"路径不可达 / 扫描为空"的根因
+          </p>
+          <p class="nas-diag__desc">
+            Docker 的目录挂载只能在容器创建时完成（运行时无法追加）。请在 NAS 主机上按顺序执行以下命令，
+            然后回到本页点击「批量重新映射路径」：
+          </p>
+          <pre class="nas-diag__cmd">{{ deployHintText }}</pre>
+          <div class="row-actions" style="margin-top: 8px;">
+            <AppButton type="button" variant="ghost" @click="copyDeployHint">
+              <i class="fas fa-copy" /> 复制命令
+            </AppButton>
+            <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
+              {{ nasReresolveBusy ? "重试中…" : "已执行，重新检测" }}
+            </AppButton>
+          </div>
+        </div>
+        <!-- 状态二：已挂载但存在不可达源 → 一键修复 -->
+        <div v-else-if="diagState === 'fixable'" class="nas-diag nas-diag--warn">
+          <p class="nas-diag__title">
+            <i class="fas fa-wrench" />
+            {{ nasInaccessibleCount }} 个媒体源不可达
+          </p>
+          <p class="nas-diag__desc">
+            历史版本可能保存了主机视角路径。点击「批量重新映射」自动改写并即时刷新可达性；
+            若修复后仍不可达，请检查路径是否真实存在。
+          </p>
+          <div class="row-actions" style="margin-top: 8px;">
+            <AppButton type="button" variant="primary" :disabled="nasReresolveBusy" @click="runReresolve">
+              {{ nasReresolveBusy ? "修复中…" : "一键修复路径映射" }}
+            </AppButton>
+          </div>
+        </div>
+        <!-- 状态三：全部可达 -->
+        <div v-else-if="diagState === 'ok'" class="nas-diag nas-diag--ok">
+          <p class="nas-diag__title"><i class="fas fa-circle-check" /> 全部媒体源可访问</p>
+          <p class="nas-diag__desc">可达性每 5 分钟自动复测；现在可以执行「全量扫描」建立索引。</p>
+        </div>
+        <!-- 无源：引导添加 -->
+        <div v-else class="nas-diag nas-diag--warn">
+          <p class="nas-diag__title"><i class="fas fa-circle-info" /> 尚未配置媒体源</p>
+          <p class="nas-diag__desc">在下方表单填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别内网挂载、完成映射并持续监测有效性。</p>
+        </div>
+      </SettingsCard>
+
+      <!-- [实测回归] 映射详情属于高级内容, 折叠收起, 不再占据页面 C 位 -->
+      <details class="nas-advanced">
+        <summary>高级：主机路径 → 容器路径映射详情</summary>
       <SettingsCard title="NAS 主机路径映射（[V7 §9.4+ 扩展 G18]）" :loading="nasMountsLoading">
         <SettingsRow label="操作">
           <div class="row-actions">
@@ -757,6 +846,7 @@ onUnmounted(() => {
           </table>
         </SettingsRow>
       </SettingsCard>
+      </details>
 
       <SettingsCard title="NAS 媒体源（[V7 §9.4+ 扩展 G1.C]）" :loading="nasLoading">
         <SettingsRow label="添加媒体源">
@@ -1077,6 +1167,61 @@ onUnmounted(() => {
 .settings-help {
   color: var(--color-text-secondary, #6b7280);
   font-size: 13px;
+}
+/* [实测回归·重新设计] NAS 系统诊断卡 */
+.nas-diag {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+.nas-diag--danger {
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(220, 38, 38, 0.35);
+}
+.nas-diag--warn {
+  background: rgba(217, 119, 6, 0.1);
+  border-color: rgba(217, 119, 6, 0.35);
+}
+.nas-diag--ok {
+  background: rgba(0, 200, 100, 0.1);
+  border-color: rgba(0, 200, 100, 0.3);
+}
+.nas-diag__title {
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+.nas-diag--danger .nas-diag__title { color: #dc2626; }
+.nas-diag--warn .nas-diag__title { color: #d97706; }
+.nas-diag--ok .nas-diag__title { color: #059669; }
+.nas-diag__desc {
+  margin: 0 0 4px;
+  color: var(--color-text-secondary, #9ca3af);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.nas-diag__cmd {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* 高级折叠区 */
+.nas-advanced {
+  margin-top: 12px;
+}
+.nas-advanced > summary {
+  cursor: pointer;
+  color: var(--color-text-secondary, #9ca3af);
+  font-size: 13px;
+  padding: 6px 0;
+  user-select: none;
+}
+.nas-advanced > summary:hover {
+  color: var(--color-text-primary, #e5e7eb);
 }
 /* [V7 §9.4+ 扩展 G18] NAS 媒体源 CRUD 表格样式 */
 .nas-status-line {

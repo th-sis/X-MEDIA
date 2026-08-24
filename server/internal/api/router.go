@@ -179,7 +179,12 @@ func NewRouter(d Deps) http.Handler {
 		h.log.Info("NAS sources wired (G1 admin 端点可用)")
 	}
 	if d.IndexEngine != nil {
-		h.indexAdmin = &indexAdminHandlers{engine: d.IndexEngine, index: d.MediaIndex}
+		h.indexAdmin = &indexAdminHandlers{
+			engine:     d.IndexEngine,
+			index:      d.MediaIndex,
+			nasSources: d.NASSources,
+			resolver:   h.nasMountResolver,
+		}
 	}
 	h.configAdmin = &configAdminHandlers{configs: d.Configs, bus: d.Bus}
 	// [V7 整改 commit #4] NAS mount admin endpoints.

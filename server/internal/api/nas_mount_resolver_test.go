@@ -9,10 +9,14 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"xmedia/internal/domain"
+	"xmedia/internal/indexengine"
 )
 
 // fakeCfgRepo api 包内最小 ConfigRepository 替身.
@@ -80,6 +84,30 @@ func TestNASMountResolver_NoMountDetectedPassthrough(t *testing.T) {
 	}
 }
 
+// [实测回归] 全部启用源不可达时, 扫描必须在触发前被拦截 (400 + 原因),
+// 而不是异步空跑后 done/0 文件让界面"无反应".
+func TestIndexNASFullPrecheckBlocksWhenAllUnreachable(t *testing.T) {
+	h := &indexAdminHandlers{
+		engine: &indexengine.Service{},
+		index:  nil,
+		nasSources: func() fakeNASSourcesRepo {
+			r := newFakeNASSourcesRepo()
+			_, _ = r.Create(context.Background(), &domain.NASSource{Name: "a", Path: "/mnt/BTORAGE/x", Enabled: true})
+			return r
+		}(),
+		resolver: &nasMountResolver{mounts: domain.NASMountMap{}, detected: nil},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/index/nas/full", nil)
+	rec := httptest.NewRecorder()
+	h.handleIndexNASFull(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("全不可达时应 400 拦截, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "不可达") {
+		t.Fatalf("错误信息应说明不可达原因: %s", rec.Body.String())
+	}
+}
+
 func TestNASMountReresolveAllRewritesStalePaths(t *testing.T) {
 	h := &Handler{
 		nasSources:      newFakeNASSourcesRepo(),
@@ -92,16 +120,52 @@ func TestNASMountReresolveAllRewritesStalePaths(t *testing.T) {
 	repo := h.nasSources.(fakeNASSourcesRepo)
 	id1, _ := repo.Create(context.Background(), &domain.NASSource{Name: "Asia", Path: "/mnt/BTORAGE/Asia-Movie", Enabled: true})
 
-	results := h.reresolveAllPaths(context.Background())
+	results, hint := h.reresolveAllPaths(context.Background())
 	if len(results) != 1 {
 		t.Fatalf("results = %d, want 1", len(results))
 	}
 	if !results[0].Changed {
 		t.Fatalf("存量宿主路径应被改写")
 	}
+	if hint != "" {
+		t.Fatalf("有 SMB 挂载时 deploy_hint 应为空, got %q", hint)
+	}
 	cur, _ := repo.Get(context.Background(), id1)
 	if cur.Path != "/mnt/nas-root/Asia-Movie" {
 		t.Fatalf("path = %q, want /mnt/nas-root/Asia-Movie", cur.Path)
+	}
+}
+
+// [实测回归] 无 SMB 挂载时 reresolve 必须返回 deploy_hint + 逐条即时可达性,
+// 让前端能解释"为什么点了没变绿"而不是让用户对着 not_accessible 猜.
+func TestNASMountReresolveAllDeployHintWhenNoMount(t *testing.T) {
+	h := &Handler{
+		nasSources:      newFakeNASSourcesRepo(),
+		nasMountResolver: &nasMountResolver{
+			mounts:   domain.NASMountMap{},
+			configs:  newFakeCfgRepo(),
+			detected: nil, // 容器无任何 SMB 挂载
+		},
+	}
+	repo := h.nasSources.(fakeNASSourcesRepo)
+	id1, _ := repo.Create(context.Background(), &domain.NASSource{Name: "Asia", Path: "/mnt/BTORAGE/Asia-Movie", Enabled: true})
+
+	results, hint := h.reresolveAllPaths(context.Background())
+	if hint == "" {
+		t.Fatalf("无挂载时 deploy_hint 不应为空")
+	}
+	if !strings.Contains(hint, "NAS_MEDIA_PATH") {
+		t.Fatalf("deploy_hint 应含 NAS_MEDIA_PATH 指引, got %q", hint)
+	}
+	if results[0].Changed {
+		t.Fatalf("passthrough 下不应改写")
+	}
+	if results[0].Accessible != string(domain.NASAccessibilityNotAccessible) {
+		t.Fatalf("accessible = %q, want not_accessible", results[0].Accessible)
+	}
+	got, _ := repo.Get(context.Background(), id1)
+	if got.LastAccessibility != domain.NASAccessibilityNotAccessible {
+		t.Fatalf("UpdateHealth 应回写 not_accessible, got %q", got.LastAccessibility)
 	}
 }
 
