@@ -160,6 +160,26 @@ export function bulkNASHealth(): Promise<NASBulkHealth> {
   return http.post<NASBulkHealth>("/admin/nas-sources/bulk-health", {});
 }
 
+// [76007b2 UI-first] 存量 source 路径批量重映射：
+// 历史版本入库的主机视角路径 (/mnt/BTORAGE/*) 一键改写为容器内路径。
+export interface NASReresolveItem {
+  id: number;
+  name: string;
+  old_path: string;
+  new_path: string;
+  source: NASResolveSource;
+  changed: boolean;
+  error?: string;
+}
+export interface NASReresolveResult {
+  total: number;
+  changed: number;
+  results: NASReresolveItem[];
+}
+export function reresolveNASPaths(): Promise<NASReresolveResult> {
+  return http.post<NASReresolveResult>("/admin/nas-sources/reresolve", {});
+}
+
 // ===== [V7 §9.4+ 扩展 G18] NAS 主机路径 → 容器路径 映射管理 =====
 //
 // commit #4 (e914ebc) 添加后端 6 个端点：
@@ -179,11 +199,11 @@ export interface NASMount {
 }
 
 // 探测结果（来自 /proc/self/mountinfo SMB/cifs 挂载）
+// [76007b2 对齐] 后端 domain.MountInfoEntry JSON tag: filesystem/mount_target/source
 export interface NASDetectedMount {
-  mount_point: string;
-  fs_type: string;
+  filesystem: string;
+  mount_target: string;
   source: string;
-  super_options: string;
 }
 
 export interface NASMountListView {
@@ -191,7 +211,7 @@ export interface NASMountListView {
   detected: NASDetectedMount[];
 }
 
-export type NASResolveSource = "explicit" | "auto_detected" | "passthrough";
+export type NASResolveSource = "explicit" | "auto_detected" | "smb_alias" | "passthrough";
 
 export interface NASResolveResult {
   input: string;

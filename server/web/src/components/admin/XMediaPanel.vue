@@ -21,6 +21,7 @@ import {
   deleteNASSource,
   testNASPath,
   bulkNASHealth,
+  reresolveNASPaths,
   fetchNASMounts,
   deleteNASMount,
   probeNASMounts,
@@ -84,6 +85,8 @@ const nasDetected = ref<NASDetectedMount[]>([]);
 const nasMountsLoading = ref(false);
 const nasProbeBusy = ref(false);
 const nasDeleteMountBusy = ref<string | null>(null);
+// [76007b2 UI-first] 存量路径批量重映射
+const nasReresolveBusy = ref(false);
 // 实时预览：用户在 nasNewPath 输入时，debounce 300ms 调一次 resolve
 const nasResolvePreview = ref<NASResolveResult | null>(null);
 const nasResolveBusy = ref(false);
@@ -328,7 +331,28 @@ function scheduleResolvePreview() {
 function sourceLabel(source: NASResolveResult["source"] | undefined): string {
   if (source === "explicit") return "手动映射";
   if (source === "auto_detected") return "自动探测";
+  // [76007b2] SMB 源别名推导：命中后后端已自动持久化映射到 configs
+  if (source === "smb_alias") return "SMB 别名映射（已自动保存）";
   return "原样透传";
+}
+
+// [76007b2 UI-first] 存量路径批量重映射：历史宿主视角路径一键改写。
+async function runReresolve() {
+  nasReresolveBusy.value = true;
+  try {
+    const res = await reresolveNASPaths();
+    const list = await fetchNASSources();
+    nasSources.value = list;
+    if (res.changed > 0) {
+      toast.success(`已重映射 ${res.changed}/${res.total} 个源路径，列表已刷新`);
+    } else {
+      toast.info(`全部 ${res.total} 个源路径无需改写`);
+    }
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "批量重映射失败"));
+  } finally {
+    nasReresolveBusy.value = false;
+  }
 }
 
 async function saveConfig(key: string, value: string, label: string) {
@@ -485,9 +509,19 @@ onUnmounted(() => {
     <div v-show="activeTab === OVERVIEW_TAB">
       <SettingsCard title="能力预检（§6.3）" :loading="loading">
         <SettingsRow label="NAS 状态（§27.4）">
-          <AdminStatusPill :tone="nasStatusTone">
-            {{ nasStatusLabel }}
-          </AdminStatusPill>
+          <div class="nas-status-line">
+            <AdminStatusPill :tone="nasStatusTone">{{ nasStatusLabel }}</AdminStatusPill>
+            <span class="settings-help">
+              已配置 {{ snapshot?.capabilities.nas_total_sources ?? 0 }} 个源 · 启用 {{ snapshot?.capabilities.nas_enabled_sources ?? 0 }} 个 · 可达性每 5 分钟自动复测
+            </span>
+          </div>
+          <!-- [76007b2] not_accessible 时给出新逻辑下的自愈操作：批量重映射 → 去 NAS 配置 -->
+          <div v-if="nasStatus === 'not_accessible'" class="row-actions" style="margin-top: 8px;">
+            <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
+              {{ nasReresolveBusy ? "重映射中…" : "批量重新映射存量路径" }}
+            </AppButton>
+            <AppButton type="button" variant="ghost" @click="goToTab(NAS_TAB)">去 NAS 配置</AppButton>
+          </div>
         </SettingsRow>
         <SettingsRow label="NAS 索引完成">
           <AdminStatusPill :tone="nasIndexComplete ? 'success' : 'warning'">
@@ -665,6 +699,7 @@ onUnmounted(() => {
           <p class="row-hint">
             主机路径由后端按以下优先级自动映射：① 手动添加的映射（见下表）②
             <code>/proc/self/mountinfo</code> SMB/cifs 探测 ③
+            SMB 源别名推导（从 //内网IP/share 自动识别，命中后自动保存为手动映射）④
             原样透传（容器内路径）。新增媒体源时，输入主机路径即可，下方有实时预览。
           </p>
         </SettingsRow>
@@ -713,9 +748,9 @@ onUnmounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(d, idx) in nasDetected" :key="`${d.mount_point}-${idx}`">
-                <td class="path-cell" :title="d.mount_point">{{ d.mount_point }}</td>
-                <td>{{ d.fs_type }}</td>
+              <tr v-for="(d, idx) in nasDetected" :key="`${d.mount_target}-${idx}`">
+                <td class="path-cell" :title="d.mount_target">{{ d.mount_target }}</td>
+                <td>{{ d.filesystem }}</td>
                 <td class="path-cell" :title="d.source">{{ d.source }}</td>
               </tr>
             </tbody>
@@ -747,6 +782,7 @@ onUnmounted(() => {
             :class="{
               'is-explicit': nasResolvePreview?.source === 'explicit',
               'is-auto_detected': nasResolvePreview?.source === 'auto_detected',
+              'is-smb_alias': nasResolvePreview?.source === 'smb_alias',
               'is-passthrough': nasResolvePreview?.source === 'passthrough',
             }"
           >
@@ -822,12 +858,16 @@ onUnmounted(() => {
             <AppButton type="button" variant="ghost" :disabled="nasBulkHealthBusy" @click="runBulkHealth">
               {{ nasBulkHealthBusy ? "检测中…" : "全部可访问性检测" }}
             </AppButton>
+            <!-- [76007b2 UI-first] 历史宿主视角路径一键改写为容器内路径 -->
+            <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
+              {{ nasReresolveBusy ? "重映射中…" : "批量重新映射路径" }}
+            </AppButton>
           </div>
           <p class="row-hint" v-if="nasSources.length === 0">
-            ⚠ 当前没有 NAS 媒体源。请先在上方表单添加主机路径（后端会自动映射到容器内路径）后再点击扫描。
+            ⚠ 当前没有 NAS 媒体源。请先在上方表单填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别内网挂载并完成映射入库。
           </p>
           <p class="row-hint" v-else>
-            提示：NAS 媒体源独立启停；启用后才会参与扫描、P0 智能跳过命中、P1 转存候选。
+            可达性每 5 分钟自动复测并刷新「可访问」列；「全部可访问性检测」会同时统计文件数。「批量重新映射路径」用于把历史版本保存的主机视角路径改写为容器内路径。
           </p>
         </SettingsRow>
       </SettingsCard>
@@ -1039,6 +1079,12 @@ onUnmounted(() => {
   font-size: 13px;
 }
 /* [V7 §9.4+ 扩展 G18] NAS 媒体源 CRUD 表格样式 */
+.nas-status-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .nas-add-row {
   display: flex;
   flex-wrap: wrap;
@@ -1123,6 +1169,11 @@ onUnmounted(() => {
 .nas-resolve-preview.is-auto_detected {
   background: rgba(110, 108, 240, 0.12);
   color: #4338ca;
+}
+/* [76007b2] SMB 别名映射：青色系，与"已自动保存"语义对应 */
+.nas-resolve-preview.is-smb_alias {
+  background: rgba(14, 165, 160, 0.12);
+  color: #0f766e;
 }
 .nas-resolve-preview.is-passthrough {
   background: rgba(120, 120, 120, 0.08);

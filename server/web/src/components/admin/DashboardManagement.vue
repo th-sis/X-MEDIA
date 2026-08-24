@@ -89,9 +89,12 @@ const xMediaHealth = ref<HealthStatus | null>(null);
 // V7 §28.3:stateSnapshot 用于 startup banner（uptime + last_restart_reason）。
 const stateSnapshot = ref<import("@/api/xmedia").StateSnapshot | null>(null);
 
-const nasAvailable = computed(() => !!xMediaSnapshot.value?.nas_available);
 const nasIndexComplete = computed(() => !!xMediaSnapshot.value?.nas_index_complete);
 const loggedInDrivers = computed(() => xMediaSnapshot.value?.logged_in_drivers ?? []);
+// [76007b2 对齐] NAS 三态：not_configured / ok / not_accessible。
+// 旧实现只看 nas_available，把"已配源但路径不可达"误显示为"未配置"。
+const nasStatus = computed(() => xMediaSnapshot.value?.nas_status ?? "not_configured");
+const nasEnabledSources = computed(() => xMediaSnapshot.value?.nas_enabled_sources ?? 0);
 
 // V7 §27.1：优先用 snapshot 实时状态（启动快照可能过时），health validation 仅作降级消息源。
 const tmdbStatus = computed(() => xMediaHealth.value?.validation?.tmdb_key?.status ?? "unknown");
@@ -109,14 +112,23 @@ const accountStatus = computed(() => {
 const tmdbOk = computed(() => tmdbStatus.value === "ok");
 const pansearchOk = computed(() => pansearchStatus.value === "ok");
 const accountOk = computed(() => accountStatus.value === "ok");
-const nasOk = computed(() => nasAvailable.value);
+const nasOk = computed(() => nasStatus.value === "ok");
 const indexOk = computed(() => nasIndexComplete.value);
+
+// [76007b2 对齐] NAS chip 文案按三态区分；不可达时给出数量与自愈入口提示。
+const nasChipMessage = computed(() => {
+  if (nasStatus.value === "ok") return "可用";
+  if (nasStatus.value === "not_accessible") {
+    return `已配 ${nasEnabledSources.value} 个源但路径不可达，可批量重映射`;
+  }
+  return "未配置";
+});
 
 const healthyChips = computed(() => [
   { key: "tmdb", label: "TMDB", ok: tmdbOk.value, message: tmdbOk.value ? "已连接" : (xMediaHealth.value?.validation?.tmdb_key?.message ?? "未配置") },
   { key: "pansearch", label: "PanSou", ok: pansearchOk.value, message: pansearchOk.value ? "可用" : "不可达" },
   { key: "account", label: "网盘账号", ok: accountOk.value, message: accountOk.value ? `${loggedInDrivers.value.length} 个已登录` : (loggedInDrivers.value.length === 0 ? "未登录" : `${loggedInDrivers.value.length} 个已登录`) },
-  { key: "nas", label: "NAS", ok: nasOk.value, message: nasOk.value ? "可用" : "未配置" },
+  { key: "nas", label: "NAS", ok: nasOk.value, message: nasChipMessage.value },
   { key: "index", label: "索引", ok: indexOk.value, message: indexOk.value ? "已完成" : "未完成" },
 ]);
 
