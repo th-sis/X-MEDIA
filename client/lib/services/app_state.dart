@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/media.dart';
 import 'api_client.dart';
+import 'restart_detector.dart';
 import 'ws_client.dart';
 
 class AppState extends ChangeNotifier {
@@ -29,6 +30,14 @@ class AppState extends ChangeNotifier {
   AppState() {
     api = ApiClient(backendUrl);
     _init();
+  }
+
+  /// [V7 §23.0] 测试用构造器: 跳过 _init() 异步副作用, 字段直接控制.
+  /// 用于 widget 4 状态测试和 TV 焦点导航测试.
+  @visibleForTesting
+  AppState.forTest() {
+    api = ApiClient(backendUrl);
+    // 不调 _init(), 让测试直接赋值 loading/sections/error 等字段.
   }
 
   Future<void> _init() async {
@@ -111,10 +120,12 @@ class AppState extends ChangeNotifier {
         _safeSections(),
         _safeContinue(),
         _safeCaps(),
+        _safeSnapshot(),
       ]);
       sections = results[0] as List<Section>;
       continueWatching = results[1] as List<ContinueWatching>;
       capabilities = results[2] as Capabilities;
+      // results[3] = _safeSnapshot 返回的 bool (是否检测到重启), 此处不直接使用.
       debugPrint('[XMedia] refresh ok: sections=${sections.length}, cw=${continueWatching.length}');
     } catch (e, st) {
       debugPrint('[XMedia] refresh FAILED: $e\n$st');
@@ -152,6 +163,35 @@ class AppState extends ChangeNotifier {
       return capabilities;
     }
   }
+
+  /// [V7 §28.3] 拉 snapshot 检测后端重启. 返回 bool (true = 检测到重启).
+  /// 失败静默 (snapshot 不影响主页展示, 失败时保持现状).
+  Future<bool> _safeSnapshot() async {
+    try {
+      final snap = await api.snapshot();
+      final restarted = _restartDetector.detectRestart(
+        snap.serverStartedAt,
+        reason: snap.lastRestartReason,
+      );
+      if (restarted) {
+        // 触发 UI 层 Banner (由 kodi_shell 监听 restartJustDetected 渲染).
+        debugPrint('[XMedia] §28.3 后端已重启, reason=${snap.lastRestartReason}');
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// UI 消费完重启通知后调, 清标志.
+  void acknowledgeRestart() {
+    _restartDetector.acknowledgeRestart();
+    notifyListeners();
+  }
+
+  bool get restartJustDetected => _restartDetector.restartJustDetected;
+  final RestartDetector _restartDetector = RestartDetector();
 
   @override
   void dispose() {

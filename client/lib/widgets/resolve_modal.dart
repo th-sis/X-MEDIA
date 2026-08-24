@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/app_state.dart';
 import '../services/ws_client.dart';
 import '../theme/app_theme.dart';
+import 'resolve_modal_helpers.dart';
 
 class ResolveModal extends StatefulWidget {
   final AppState app;
@@ -138,26 +139,14 @@ class _ResolveModalState extends State<ResolveModal> {
     super.dispose();
   }
 
+  /// [V7 §17.5 + §6.3] 当前激活层. 委托给 helper 便于单元测试,
+  /// skipNas 由 AppState.capabilities.nasAvailable && nasIndexComplete 计算.
   int _layerIndex() {
-    switch (_state.stage) {
-      case ResolveStage.resolveStart:
-      case ResolveStage.nasLookup:
-      case ResolveStage.nasHit:
-        return 0;
-      case ResolveStage.panSearching:
-      case ResolveStage.panSearched:
-      case ResolveStage.transferring:
-      case ResolveStage.resolvingLink:
-        return 1;
-      case ResolveStage.magnetDownloading:
-        return 2;
-      case ResolveStage.notFound:
-        return 3;
-      case ResolveStage.playReady:
-        return 4;
-      case ResolveStage.error:
-        return 4;
-    }
+    final skipNas = shouldSkipP0(
+      nasAvailable: widget.app.capabilities.nasAvailable,
+      nasIndexComplete: widget.app.capabilities.nasIndexComplete,
+    );
+    return resolveLayerForStage(_state.stage, skipNas: skipNas);
   }
 
   @override
@@ -177,32 +166,66 @@ class _ResolveModalState extends State<ResolveModal> {
             Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: AppTypography.subtitle),
             const SizedBox(height: 20),
-            // 四层步骤条
+            // 四层步骤条 (V7 §17.5 P0 跳过逻辑):
+            //   P0 灰显 + 跳过标记: skipNas 时 P0 步骤圈颜色变灰 + 文字"已跳过"
+            //   当前层高亮 (active): 用对应层语义色 (resolveP0/P1/P2/P3)
+            //   已完成层: success 绿色 ✓
             Row(
               children: List.generate(4, (i) {
+                final skipNas = shouldSkipP0(
+                  nasAvailable: widget.app.capabilities.nasAvailable,
+                  nasIndexComplete: widget.app.capabilities.nasIndexComplete,
+                );
+                final nasSkipped = i == 0 && skipNas;
                 final done = _state.isSuccess || li > i;
-                final active = li == i;
+                final active = li == i && !nasSkipped;
+                // 当前层的语义色 (附录 C.1)
+                final layerColor = switch (i) {
+                  0 => AppColors.resolveP0,
+                  1 => AppColors.resolveP1,
+                  2 => AppColors.resolveP2,
+                  _ => AppColors.resolveP3,
+                };
                 return Expanded(
                   child: Column(
                     children: [
                       Row(children: [
-                        Expanded(child: Container(height: 3, color: i == 0 ? Colors.transparent : (done || active ? AppColors.accent : AppColors.surfaceHigh))),
+                        Expanded(child: Container(height: 3, color: i == 0 ? Colors.transparent : (done || active ? layerColor : AppColors.surfaceHigh))),
                         Container(
                           width: 26, height: 26,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: done ? AppColors.success : active ? AppColors.accent : AppColors.surfaceHigh,
+                            color: done
+                                ? AppColors.success
+                                : nasSkipped
+                                    ? AppColors.surfaceHigh
+                                    : active
+                                        ? layerColor
+                                        : AppColors.surfaceHigh,
+                            border: nasSkipped ? Border.all(color: AppColors.textMuted.withValues(alpha: 0.3), width: 1) : null,
                           ),
                           child: Center(
                             child: done
                                 ? const Icon(Icons.check_rounded, size: 16, color: Colors.white)
-                                : Text('${i + 1}', style: TextStyle(fontSize: 12, color: active ? Colors.black : AppColors.textMuted, fontWeight: FontWeight.bold)),
+                                : nasSkipped
+                                    ? Icon(Icons.block, size: 14, color: AppColors.textMuted.withValues(alpha: 0.5))
+                                    : Text('${i + 1}', style: TextStyle(fontSize: 12, color: active ? Colors.black : AppColors.textMuted, fontWeight: FontWeight.bold)),
                           ),
                         ),
                         Expanded(child: Container(height: 3, color: i == 3 ? Colors.transparent : (done ? AppColors.success : AppColors.surfaceHigh))),
                       ]),
                       const SizedBox(height: 6),
-                      Text(layers[i], style: AppTypography.caption.copyWith(color: active ? AppColors.accent : AppColors.textMuted)),
+                      Text(
+                        nasSkipped ? '${layers[i]} (跳过)' : layers[i],
+                        style: AppTypography.caption.copyWith(
+                          color: nasSkipped
+                              ? AppColors.textMuted.withValues(alpha: 0.5)
+                              : active
+                                  ? layerColor
+                                  : AppColors.textMuted,
+                          decoration: nasSkipped ? TextDecoration.lineThrough : null,
+                        ),
+                      ),
                     ],
                   ),
                 );
@@ -229,9 +252,12 @@ class _ResolveModalState extends State<ResolveModal> {
               borderRadius: BorderRadius.circular(3),
               child: LinearProgressIndicator(
                 value: _state.progressPct / 100,
-                minHeight: 5,
+                // [V7 §17.5] P2 阶段进度条加粗 + 黄色, 视觉强调小时级等待
+                minHeight: shouldShowProgressBar(_state.stage) ? 8 : 5,
                 backgroundColor: AppColors.surfaceHigh,
-                valueColor: const AlwaysStoppedAnimation(AppColors.accent),
+                valueColor: AlwaysStoppedAnimation(
+                  shouldShowProgressBar(_state.stage) ? AppColors.resolveP2 : AppColors.accent,
+                ),
               ),
             ),
             const SizedBox(height: 20),

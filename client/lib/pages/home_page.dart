@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/media.dart';
 import '../services/app_state.dart';
+import '../services/availability.dart';
 import '../theme/app_theme.dart';
 import '../widgets/focus.dart';
 import '../widgets/poster_card.dart';
@@ -66,7 +67,7 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class _HomeContent extends StatelessWidget {
+class _HomeContent extends StatefulWidget {
   final MediaSummary? heroItem;
   final List<Section> sections;
   final List<ContinueWatching> continueWatching;
@@ -81,13 +82,59 @@ class _HomeContent extends StatelessWidget {
   });
 
   @override
+  State<_HomeContent> createState() => _HomeContentState();
+}
+
+class _HomeContentState extends State<_HomeContent> {
+  // [V7 §17.2 D53] 批量查可播放性后回填, PosterCard 拿这个渲染左上角 ✓ 角标.
+  Set<int> _availableIds = const {};
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _refreshAvailability();
+  }
+
+  @override
+  void didUpdateWidget(covariant _HomeContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.sections != widget.sections) {
+      _refreshAvailability();
+    }
+  }
+
+  Future<void> _refreshAvailability() async {
+    final api = context.read<AppState>().api;
+    final ids = <int>[];
+    for (final s in widget.sections) {
+      for (final m in s.items) {
+        ids.add(m.externalId);
+      }
+    }
+    if (ids.isEmpty) return;
+    try {
+      final keys = ids
+          .map((id) => availabilityKeyForSummary(externalId: id, externalSource: 'tmdb'))
+          .toList();
+      final available = await api.checkAvailability(keys);
+      if (mounted) {
+        setState(() {
+          _availableIds = available.map((k) => k.externalId).toSet();
+        });
+      }
+    } catch (_) {
+      // 静默: 不阻塞首页展示
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return ListView(
       key: const PageStorageKey('home'),
       padding: const EdgeInsets.only(bottom: 32),
       children: [
-        if (heroItem != null) _HeroSection(item: heroItem!),
-        if (continueWatching.isNotEmpty) ...[
+        if (widget.heroItem != null) _HeroSection(item: widget.heroItem!),
+        if (widget.continueWatching.isNotEmpty) ...[
           const _SectionHeader(title: '继续观看', enTitle: 'CONTINUE WATCHING', icon: Icons.play_circle_outline_rounded),
           SizedBox(
             height: 142,
@@ -96,9 +143,9 @@ class _HomeContent extends StatelessWidget {
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: AppSpacing.xl),
-                itemCount: continueWatching.length,
+                itemCount: widget.continueWatching.length,
                 itemBuilder: (context, i) {
-                  final cw = continueWatching[i];
+                  final cw = widget.continueWatching[i];
                   return Padding(
                     padding: const EdgeInsets.only(right: AppSpacing.md),
                     child: LandscapeCard(
@@ -107,7 +154,7 @@ class _HomeContent extends StatelessWidget {
                       progress: cw.progress,
                       posterUrl: cw.posterUrl,
                       seed: cw.externalId,
-                      onTap: () => onOpen(context, cw.externalId, cw.externalSource),
+                      onTap: () => widget.onOpen(context, cw.externalId, cw.externalSource),
                     ),
                   );
                 },
@@ -116,11 +163,12 @@ class _HomeContent extends StatelessWidget {
           ),
           const SizedBox(height: 8),
         ],
-        ...sections.take(3).map((s) => _SectionShelf(
+        ...widget.sections.take(3).map((s) => _SectionShelf(
               section: s,
-              autofocusFirst: sections.indexOf(s) == 0,
-              onTap: (m) => onOpen(context, m.externalId, m.externalSource),
-              onHover: onHover,
+              autofocusFirst: widget.sections.indexOf(s) == 0,
+              availableIds: _availableIds,
+              onTap: (m) => widget.onOpen(context, m.externalId, m.externalSource),
+              onHover: widget.onHover,
             )),
       ],
     );
@@ -484,7 +532,14 @@ class _SectionShelf extends StatelessWidget {
   final bool autofocusFirst;
   final void Function(MediaSummary) onTap;
   final void Function(MediaSummary) onHover;
-  const _SectionShelf({required this.section, required this.onTap, required this.onHover, this.autofocusFirst = false});
+  final Set<int> availableIds; // [V7 §17.2 D53]
+  const _SectionShelf({
+    required this.section,
+    required this.onTap,
+    required this.onHover,
+    this.autofocusFirst = false,
+    this.availableIds = const {},
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -508,6 +563,7 @@ class _SectionShelf extends StatelessWidget {
                   child: PosterCard(
                     media: m,
                     autofocus: autofocusFirst && i == 0,
+                    available: availableIds.contains(m.externalId),
                     onTap: () => onTap(m),
                     onFocusChange: (f) {
                       if (f) onHover(m);

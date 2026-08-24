@@ -3,13 +3,14 @@ import '../models/media.dart';
 import '../theme/app_theme.dart';
 import 'focus.dart';
 
-/// 海报卡片：真实海报或渐变占位 + 焦点高亮 + 评分角标。
+/// 海报卡片：真实海报或渐变占位 + 焦点高亮 + 评分角标 + 可播放 ✓ 角标 (V7 §17.2 D53).
 class PosterCard extends StatelessWidget {
   final MediaSummary media;
   final VoidCallback onTap;
   final double width;
   final double height;
   final bool autofocus;
+  final bool available; // [V7 §17.2] true → 左上角绿色 ✓ 角标 (P0 可秒播)
   final ValueChanged<bool>? onFocusChange;
 
   const PosterCard({
@@ -19,6 +20,7 @@ class PosterCard extends StatelessWidget {
     this.width = 150,
     this.height = 225,
     this.autofocus = false,
+    this.available = false,
     this.onFocusChange,
   });
 
@@ -53,6 +55,31 @@ class PosterCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   _poster(),
+                  // [V7 §17.2 D53] 可播放 ✓ 角标 (左上, 与右上评分区分):
+                  //   仅当 NAS 索引命中 (P0 可秒播) 时显示, 让用户提前知道点击立即播放.
+                  if (available)
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.success,
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_rounded, size: 12, color: Colors.white),
+                            SizedBox(width: 2),
+                            Text(
+                              '可播放',
+                              style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w700, letterSpacing: 0.3),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   // 评分角标
                   if (media.voteAvg > 0)
                     Positioned(

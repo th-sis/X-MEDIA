@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:fvp/fvp.dart' as fvp;
 import 'package:provider/provider.dart';
 import 'services/app_state.dart';
 import 'theme/app_theme.dart';
 import 'widgets/focus.dart';
 import 'widgets/kodi_shell.dart';
 
+/// [V7 D2] fvp (mdk-sdk) 替代 video_player, 解决 Dolby Vision 色彩问题.
+/// 在所有平台启用 fvp 实现; Desktop (windows/linux/macos) 由 fvp 接管,
+/// Mobile (android/ios) 由 fvp 提供的 D3D11/Metal/OpenGL/Impeller 渲染,
+/// 较 video_player 自带的 ExoPlayer/AVPlayer 色彩更准确.
+void _registerVideoBackend() {
+  fvp.registerWith();
+}
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  _registerVideoBackend();
   runApp(const XMediaApp());
 }
 

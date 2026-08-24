@@ -16,6 +16,10 @@ dependencies:
   web_socket_channel: ^3.0.1
   shared_preferences: ^2.3.2
   video_player: ^2.9.1
+  # [V7 D2] fvp (mdk-sdk) 替代 video_player, 解决 Dolby Vision 色彩问题.
+  # pub.dev/packages/fvp, BSD-3, wang-bin/fvp@master.
+  # 桌面/移动全平台 + DV 支持, API 兼容 video_player, 2 行代码接入.
+  fvp: ^0.38.0
 
 dev_dependencies:
   flutter_test:

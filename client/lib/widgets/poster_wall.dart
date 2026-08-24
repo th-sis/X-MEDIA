@@ -10,6 +10,7 @@ class PosterShelf extends StatelessWidget {
   final List<MediaSummary> items;
   final void Function(MediaSummary) onTap;
   final bool autofocusFirst;
+  final Set<int> availableIds; // [V7 §17.2 D53] 可播放 ID 集合, 左上角 ✓ 角标
 
   const PosterShelf({
     super.key,
@@ -17,6 +18,7 @@ class PosterShelf extends StatelessWidget {
     required this.items,
     required this.onTap,
     this.autofocusFirst = false,
+    this.availableIds = const {},
   });
 
   @override
@@ -45,6 +47,7 @@ class PosterShelf extends StatelessWidget {
                 child: PosterCard(
                   media: items[i],
                   autofocus: autofocusFirst && i == 0,
+                  available: availableIds.contains(items[i].externalId),
                   onTap: () => onTap(items[i]),
                 ),
               ),
@@ -62,6 +65,7 @@ class PosterGrid extends StatelessWidget {
   final void Function(MediaSummary) onTap;
   final bool autofocusFirst;
   final double posterWidth;
+  final Set<int> availableIds; // [V7 §17.2 D53] 同上
 
   const PosterGrid({
     super.key,
@@ -69,6 +73,7 @@ class PosterGrid extends StatelessWidget {
     required this.onTap,
     this.autofocusFirst = false,
     this.posterWidth = 150,
+    this.availableIds = const {},
   });
 
   @override
@@ -88,6 +93,7 @@ class PosterGrid extends StatelessWidget {
         itemBuilder: (context, i) => PosterCard(
           media: items[i],
           autofocus: autofocusFirst && i == 0,
+          available: availableIds.contains(items[i].externalId),
           onTap: () => onTap(items[i]),
         ),
       ),

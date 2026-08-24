@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/media.dart';
+import 'availability.dart';
 
 class ApiClient {
   String baseUrl;
@@ -221,11 +222,42 @@ class ApiClient {
     return Capabilities.fromJson(_decode(r));
   }
 
+  /// [V7 §28.3] 后端快照 — 包含 server_started_at 用于客户端感知重启.
+  Future<StateSnapshot> snapshot() async {
+    final r = await http.get(_u('/api/state/snapshot')).timeout(const Duration(seconds: 8));
+    return StateSnapshot.fromJson(_decode(r));
+  }
+
   /// 把相对 stream_url 转成绝对地址。
   String absolute(String urlOrPath) {
     if (urlOrPath.startsWith('http://') || urlOrPath.startsWith('https://')) return urlOrPath;
     final base = baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
     return '$base${urlOrPath.startsWith('/') ? '' : '/'}$urlOrPath';
+  }
+
+  /// [V7 §17.2 / §17.4] 批量检查内容可播放性 (P0 可秒播判定).
+  /// 用于探索页/搜索页/详情页渲染绿色 ✓ 角标 (D53/D54).
+  /// 返回已索引的 key 列表, 调用方通过 Set 判等.
+  Future<List<AvailabilityKey>> checkAvailability(List<AvailabilityKey> items) async {
+    if (items.isEmpty) return const [];
+    final r = await http.post(
+      _u('/api/media/check-availability'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'items': items.map((k) => k.toJson()).toList(),
+      }),
+    ).timeout(const Duration(seconds: 8));
+    final j = _decode(r);
+    final raw = (j['available'] as List<dynamic>?) ?? const [];
+    return raw.map((e) {
+      final m = e as Map<String, dynamic>;
+      return AvailabilityKey(
+        externalId: (m['external_id'] as num?)?.toInt() ?? 0,
+        externalSource: m['external_source'] as String? ?? 'tmdb',
+        season: (m['season'] as num?)?.toInt() ?? 0,
+        episode: (m['episode'] as num?)?.toInt() ?? 0,
+      );
+    }).toList();
   }
 }
 

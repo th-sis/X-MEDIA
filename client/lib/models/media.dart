@@ -297,6 +297,18 @@ enum ResolveStage {
       );
 }
 
+/// [V7 §28.3] 后端快照 — 用于客户端感知重启.
+class StateSnapshot {
+  final String serverStartedAt;
+  final String lastRestartReason;
+  const StateSnapshot({this.serverStartedAt = '', this.lastRestartReason = ''});
+
+  factory StateSnapshot.fromJson(Map<String, dynamic> j) => StateSnapshot(
+        serverStartedAt: j['server_started_at'] as String? ?? '',
+        lastRestartReason: j['last_restart_reason'] as String? ?? '',
+      );
+}
+
 class ResolveState {
   final int taskId;
   final ResolveStage stage;

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/media.dart';
 import '../services/app_state.dart';
+import '../services/availability.dart';
 import '../theme/app_theme.dart';
 import '../widgets/poster_wall.dart';
 import '../widgets/skeleton.dart';
@@ -21,6 +22,8 @@ class _SearchPageState extends State<SearchPage> {
   Timer? _debounce;
   List<MediaSummary> _results = const [];
   List<String> _history = const [];
+  // [V7 §17.2 D53] 已索引 ID 集合, PosterGrid 用它渲染左上角绿色 ✓ 角标.
+  Set<int> _availableIds = const {};
   bool _loading = false;
   bool _searched = false;
 
@@ -60,17 +63,38 @@ class _SearchPageState extends State<SearchPage> {
     setState(() {
       _loading = true;
       _searched = true;
+      _availableIds = const {};
     });
     try {
       final r = await context.read<AppState>().api.search(q);
       if (mounted) {
         setState(() => _results = r);
         _loadHistory();
+        // [V7 §17.2] 批量查询可播放性, 显示 ✓ 角标.
+        _refreshAvailability(r);
       }
     } catch (_) {
       if (mounted) setState(() => _results = const []);
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// [V7 §17.2] 批量查可播放性. 调用失败静默(不阻塞搜索结果).
+  Future<void> _refreshAvailability(List<MediaSummary> items) async {
+    if (items.isEmpty) return;
+    try {
+      final keys = items
+          .map((m) => availabilityKeyForSummary(externalId: m.externalId, externalSource: m.externalSource))
+          .toList();
+      final available = await context.read<AppState>().api.checkAvailability(keys);
+      if (mounted) {
+        setState(() {
+          _availableIds = available.map((k) => k.externalId).toSet();
+        });
+      }
+    } catch (_) {
+      // 静默: 网络/超时不应阻塞搜索结果
     }
   }
 
@@ -130,6 +154,7 @@ class _SearchPageState extends State<SearchPage> {
                         : PosterGrid(
                             items: _results,
                             autofocusFirst: true,
+                            availableIds: _availableIds,
                             onTap: (m) => Navigator.of(context).push(
                               MaterialPageRoute(builder: (_) => DetailPage(externalId: m.externalId, source: m.externalSource)),
                             ),
