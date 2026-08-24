@@ -189,7 +189,9 @@ func NewRouter(d Deps) http.Handler {
 	r.Use(trackResponseCommit)
 	r.Use(chimw.RequestID)
 	r.Use(h.attachRequestLogger)
-	r.Use(chimw.Recoverer)
+	// [V7 §21.4 / §27.2 可观测性] 替换 chimw.Recoverer: panic 写 ERROR 到
+	// logx (带 request_id/method/path/堆栈) 再返回 500, 修复"500 无日志"缺口.
+	r.Use(h.recoverWithLog)
 
 	r.Route("/api", func(r chi.Router) {
 		r.Get("/health", h.health)
