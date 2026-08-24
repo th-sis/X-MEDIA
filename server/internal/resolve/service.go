@@ -159,6 +159,11 @@ func NewService(opts Options) *Service {
 		indexCountFn:    opts.IndexCount,
 		indexScanningFn: opts.IndexScanning,
 		indexStatusFn:   opts.IndexStatus,
+		// [实测 bug 修复] nasPathsKnown 此前漏赋 — 只要存在 enabled NAS
+		// source (nasConfigured=true), Capabilities 走到 nasPathsKnown()
+		// 即 nil deref panic → /api/capabilities 与 /api/state/snapshot
+		// 双双 500 (与 daac473 修的 indexStatusFn 同类, 第三处).
+		nasPathsKnown:   opts.NASPathsKnown,
 		nasPathsStat:    opts.NASPathsStat,
 		nasSourcesCount: opts.NASSourcesCount,
 		pansearchSearch: opts.PansearchSearch,

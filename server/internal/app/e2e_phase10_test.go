@@ -412,6 +412,11 @@ func TestE2E_Phase10_SearchHistoryContract(t *testing.T) {
 // e_ctx 取环境 context (SearchHistory 预插用).
 func e_ctx(env *phase10Env) context.Context { return env.ctx }
 
+// mustNASSource 构造 enabled 的 NAS source (诊断用).
+func mustNASSource(name, path string) *domain.NASSource {
+	return &domain.NASSource{Name: name, Path: path, Enabled: true}
+}
+
 // --- 用例 5: 清单#12 [v7] 并发限流 (默认 3 次/30s → 第 4 个 429) ---
 
 func TestE2E_Phase10_ResolveRateLimit429(t *testing.T) {
