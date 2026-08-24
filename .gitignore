@@ -14,6 +14,7 @@
 
 # Go 构建产物（cmd/xmedia → ./bin/xmedia.exe）
 /server/bin/
+/server/out/
 
 # Hermes 审计单测（带 hermesreset/hermesverify build tag，ad-hoc 验证用，不入库）
 server/internal/**/hermes_*.go

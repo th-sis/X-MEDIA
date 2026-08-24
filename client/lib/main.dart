@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'services/app_state.dart';
 import 'theme/app_theme.dart';
 import 'widgets/focus.dart';
+import 'widgets/focus_manager.dart';
 import 'widgets/kodi_shell.dart';
 
 /// [V7 D2] fvp (mdk-sdk) 替代 video_player, 解决 Dolby Vision 色彩问题.
@@ -18,6 +19,8 @@ void _registerVideoBackend() {
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   _registerVideoBackend();
+  // [V7 §17.x.5] 焦点丢失守卫: primaryFocus 监听 + 60s 兑底检查, App 级单次启动.
+  KodiFocusManager.instance.startLossGuard();
   runApp(const XMediaApp());
 }
 

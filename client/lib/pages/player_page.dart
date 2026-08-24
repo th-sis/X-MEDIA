@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:video_player/video_player.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
+import 'player_seek.dart';
 
 class PlayerPage extends StatefulWidget {
   final String streamUrl;
@@ -38,6 +40,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
   bool _ready = false;
   bool _error = false;
   bool _controlsVisible = true;
+
+  /// 进度条拖动中的临时值 (§26.1 防抖: 拖动期间不触发真实 seek,
+  /// onChangeEnd 才提交). null = 非拖动状态, Slider 显示播放位置.
+  double? _dragValue;
   Timer? _hideTimer;
   Timer? _progressTimer;
 
@@ -93,6 +99,15 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
     if (_controlsVisible) _scheduleHide();
   }
 
+  /// [V7 §26.1] 方向键快进快退 (TV 10-foot UI): 左右键 ±10s, 钳位提交.
+  void _seekBy(int deltaSecs) {
+    final c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    final target = clampSeek(c.value.position, c.value.duration, deltaSecs);
+    c.seekTo(target);
+    if (!_controlsVisible) _toggleControls();
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final c = _controller;
@@ -124,27 +139,41 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _toggleControls,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (_error)
-              const Center(child: Text('播放失败', style: TextStyle(color: AppColors.textSecondary, fontSize: 16)))
-            else if (_ready && _controller != null)
-              Center(child: AspectRatio(aspectRatio: _controller!.value.aspectRatio, child: VideoPlayer(_controller!)))
-            else
-              const Center(child: CircularProgressIndicator()),
-            // 控制层
-            AnimatedOpacity(
-              opacity: _controlsVisible ? 1 : 0,
-              duration: AppDuration.normal,
-              child: _controls(),
+    return Shortcuts(
+      shortcuts: <ShortcutActivator, Intent>{
+        const SingleActivator(LogicalKeyboardKey.arrowLeft): const _SeekIntent(-10),
+        const SingleActivator(LogicalKeyboardKey.arrowRight): const _SeekIntent(10),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _SeekIntent: CallbackAction<_SeekIntent>(onInvoke: (intent) {
+            _seekBy(intent.deltaSecs);
+            return null;
+          }),
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _toggleControls,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (_error)
+                  const Center(child: Text('播放失败', style: TextStyle(color: AppColors.textSecondary, fontSize: 16)))
+                else if (_ready && _controller != null)
+                  Center(child: AspectRatio(aspectRatio: _controller!.value.aspectRatio, child: VideoPlayer(_controller!)))
+                else
+                  const Center(child: CircularProgressIndicator()),
+                // 控制层
+                AnimatedOpacity(
+                  opacity: _controlsVisible ? 1 : 0,
+                  duration: AppDuration.normal,
+                  child: _controls(),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -189,10 +218,17 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
             children: [
               if (c != null && c.value.isInitialized)
                 Slider(
-                  value: dur.inMilliseconds > 0 ? pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble() : 0,
+                  // [V7 §26.1] 防抖: 拖动中只更新临时值, onChangeEnd 才真实 seekTo,
+                  // 避免连续 onChanged 疯狂触发解码器.
+                  value: _dragValue ??
+                      (dur.inMilliseconds > 0 ? pos.inMilliseconds.clamp(0, dur.inMilliseconds).toDouble() : 0),
                   max: dur.inMilliseconds > 0 ? dur.inMilliseconds.toDouble() : 1,
                   activeColor: AppColors.accent,
-                  onChanged: (v) => c.seekTo(Duration(milliseconds: v.toInt())),
+                  onChanged: (v) => setState(() => _dragValue = v),
+                  onChangeEnd: (v) {
+                    setState(() => _dragValue = null);
+                    c.seekTo(Duration(milliseconds: v.toInt()));
+                  },
                 ),
               Row(
                 children: [
@@ -211,4 +247,10 @@ class _PlayerPageState extends State<PlayerPage> with WidgetsBindingObserver {
       ],
     );
   }
+}
+
+/// 方向键 seek 意图 (V7 §26.1): 左键 -10s / 右键 +10s.
+class _SeekIntent extends Intent {
+  final int deltaSecs;
+  const _SeekIntent(this.deltaSecs);
 }

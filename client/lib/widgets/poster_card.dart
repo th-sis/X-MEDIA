@@ -30,6 +30,7 @@ class PosterCard extends StatelessWidget {
       autofocus: autofocus,
       debugLabel: 'poster:${media.title}',
       onActivate: onTap,
+      onLongPress: onTap, // [V7 §17.x.4] 长按 = 显示详情
       onFocusChange: onFocusChange,
       builder: (context, focused) {
         return AnimatedScale(
@@ -198,6 +199,7 @@ class LandscapeCard extends StatelessWidget {
     return KodiFocus(
       autofocus: autofocus,
       onActivate: onTap,
+      onLongPress: onTap, // [V7 §17.x.4] 长按 = 显示详情
       builder: (context, focused) {
         return AnimatedScale(
           scale: focused ? 1.05 : 1.0,

@@ -8,11 +8,14 @@ typedef KodiTraversalPolicy = ReadingOrderTraversalPolicy;
 class KodiFocus extends StatefulWidget {
   final Widget Function(BuildContext context, bool focused) builder;
   final VoidCallback? onActivate;
+
+  /// [V7 §17.x.4] Android TV 长按 = 显示详情 (与确认键互不触发).
+  final VoidCallback? onLongPress;
   final bool autofocus;
   final String? debugLabel;
   final ValueChanged<bool>? onFocusChange;
 
-  const KodiFocus({super.key, required this.builder, this.onActivate, this.autofocus = false, this.debugLabel, this.onFocusChange});
+  const KodiFocus({super.key, required this.builder, this.onActivate, this.onLongPress, this.autofocus = false, this.debugLabel, this.onFocusChange});
 
   @override
   State<KodiFocus> createState() => _KodiFocusState();
@@ -71,6 +74,7 @@ class _KodiFocusState extends State<KodiFocus> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onActivate,
+        onLongPress: widget.onLongPress,
         child: widget.builder(context, _node.hasFocus),
       ),
     );

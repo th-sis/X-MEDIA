@@ -26,6 +26,7 @@ class AppState extends ChangeNotifier {
   String? serverStoppingMessage;
 
   StreamSubscription<WsEvent>? _wsSub;
+  StreamSubscription<void>? _wsReconnSub;
 
   AppState() {
     api = ApiClient(backendUrl);
@@ -67,13 +68,20 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _connectWs() async {
+  Future<void> _connectWs({WsClient? client}) async {
     await _wsSub?.cancel();
+    await _wsReconnSub?.cancel();
     ws?.dispose();
     try {
       final host = backendUrl.replaceFirst('http://', '').replaceFirst('https://', '');
-      ws = WsClient(host);
+      ws = client ?? WsClient(host);
       _wsSub = ws!.events.listen(_onWsEvent);
+      // [V7 §20.1.5] 断线重连成功 → HTTP 补刷: refresh 内含 snapshot,
+      // 由 RestartDetector 对比 server_started_at 触发强制刷新 (§28.3).
+      _wsReconnSub = ws!.reconnected.listen((_) {
+        debugPrint('[XMedia] §20.1.5 WS 重连成功, 触发 snapshot 补刷');
+        refresh();
+      });
       ws!.connected.addListener(() {
         wsConnected = ws!.connected.value;
         notifyListeners();
@@ -81,6 +89,10 @@ class AppState extends ChangeNotifier {
       ws!.connect();
     } catch (_) {}
   }
+
+  /// [V7 §23.0] 测试接缝: 用给定 client 走与 _connectWs 相同的接线.
+  @visibleForTesting
+  Future<void> attachWsForTest(WsClient client) => _connectWs(client: client);
 
   void _onWsEvent(WsEvent e) {
     switch (e.type) {
@@ -196,6 +208,7 @@ class AppState extends ChangeNotifier {
   @override
   void dispose() {
     _wsSub?.cancel();
+    _wsReconnSub?.cancel();
     ws?.dispose();
     super.dispose();
   }

@@ -102,4 +102,86 @@ void main() {
       expect(fm.currentFocus, equals(n1));
     });
   });
+
+  group('KodiFocusManager 焦点丢失守卫 (V7 §17.x.2/§17.x.5)', () {
+    setUp(() {
+      KodiFocusManager.instance.reset();
+    });
+
+    tearDown(() {
+      KodiFocusManager.instance.stopLossGuard();
+    });
+
+    testWidgets('子树 detach 场景: 守卫不崩、不误抢 scope 兜底焦点', (tester) async {
+      final fm = KodiFocusManager.instance;
+      final node = FocusNode(debugLabel: 'guarded');
+
+      await tester.pumpWidget(Directionality(
+        textDirection: TextDirection.ltr,
+        child: Focus(focusNode: node, autofocus: true, child: const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+      expect(node.hasFocus, isTrue);
+
+      fm.pushFocus(node);
+      fm.startLossGuard();
+
+      // 整棵树销毁. 注意: Flutter binding 的 root scope 会兜住焦点,
+      // primaryFocus 实际不会变 null (实测), 守卫因此不应动作.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull,
+          reason: '§17.x.5 守卫在极端场景下不得抛异常或误恢复');
+
+      // testWidgets 的 pending-timer 校验先于 tearDown, 需显式停守卫.
+      fm.stopLossGuard();
+    });
+
+    testWidgets('restoreFocus 从栈顶向下选中第一个仍附着的节点', (tester) async {
+      final fm = KodiFocusManager.instance;
+      final stale = FocusNode(debugLabel: 'stale'); // 已离树的失效节点
+      final live = FocusNode(debugLabel: 'live'); // 仍在树上
+
+      await tester.pumpWidget(Directionality(
+        textDirection: TextDirection.ltr,
+        child: Focus(focusNode: live, child: const SizedBox()),
+      ));
+      await tester.pumpAndSettle();
+
+      fm.pushFocus(stale);
+      fm.pushFocus(live);
+      // 模拟焦点漂移后手动恢复.
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      fm.restoreFocus();
+      await tester.pumpAndSettle();
+
+      expect(live.hasFocus, isTrue,
+          reason: '恢复应跳过失效节点, 选中栈内最近的存活目标');
+    });
+
+    test('stopLossGuard 后守卫停止', () {
+      final fm = KodiFocusManager.instance;
+      fm.startLossGuard();
+      expect(fm.lossGuardActive, isTrue);
+      fm.stopLossGuard();
+      expect(fm.lossGuardActive, isFalse);
+    });
+
+    test('startLossGuard 幂等 (不叠加 listener/timer)', () {
+      final fm = KodiFocusManager.instance;
+      fm.startLossGuard();
+      fm.startLossGuard();
+      fm.startLossGuard();
+      expect(fm.lossGuardActive, isTrue);
+      fm.stopLossGuard();
+      expect(fm.lossGuardActive, isFalse, reason: '幂等启动只注册一份, 停一次即全停');
+    });
+
+    test('recoverIfLost 无树无焦点时不崩', () {
+      final fm = KodiFocusManager.instance;
+      fm.recoverIfLost(); // primaryFocus 为 null 但栈/root 也空 → no-op
+      expect(fm.currentFocus, isNull);
+    });
+  });
 }

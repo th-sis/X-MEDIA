@@ -11,16 +11,27 @@ class WsEvent {
 
 class WsClient {
   final String host;
+
+  /// [V7 §23.0] 测试接缝: 注入假 channel 工厂, 默认真实连接.
+  @visibleForTesting
+  final Future<WebSocketChannel> Function(Uri url)? channelFactory;
+
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
   final _events = StreamController<WsEvent>.broadcast();
+  final _reconnected = StreamController<void>.broadcast();
   final ValueNotifier<bool> connected = ValueNotifier(false);
   int _attempt = 0;
   bool _disposed = false;
+  bool _everConnected = false;
 
   Stream<WsEvent> get events => _events.stream;
 
-  WsClient(this.host);
+  /// [V7 §20.1.5] 断线→重连成功后发出一次事件, 供 AppState 触发
+  /// HTTP snapshot 补刷 (§28.3 对比 server_started_at). 首次上线不发出.
+  Stream<void> get reconnected => _reconnected.stream;
+
+  WsClient(this.host, {this.channelFactory});
 
   String get _wsUrl {
     final h = host.startsWith('http') ? host.replaceFirst('http', 'ws') : 'ws://$host';
@@ -28,13 +39,33 @@ class WsClient {
     return '$base/ws';
   }
 
-  void connect() {
+  Future<void> connect() async {
     if (_disposed) return;
+    WebSocketChannel? ch;
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(_wsUrl));
+      ch = channelFactory != null
+          ? await channelFactory!(Uri.parse(_wsUrl))
+          : WebSocketChannel.connect(Uri.parse(_wsUrl));
+      if (_disposed) {
+        await ch.sink.close();
+        return;
+      }
+      // [V7 §27.2] 真实握手完成才置在线. WebSocketChannel.connect 是懒连接,
+      // 同步置 true 会造成"假在线" (服务器不可达时 UI 先显示已连再翻车),
+      // 且提前清零退避计数会打乱 §20.1 的重连节奏.
+      await ch.ready;
+      if (_disposed) {
+        await ch.sink.close();
+        return;
+      }
+      _channel = ch;
       connected.value = true;
       _attempt = 0;
-      _sub = _channel!.stream.listen(
+      if (_everConnected) {
+        _reconnected.add(null);
+      }
+      _everConnected = true;
+      _sub = ch.stream.listen(
         (data) => _onData(data),
         onDone: () => _reconnect(),
         onError: (_) => _reconnect(),
@@ -75,6 +106,7 @@ class WsClient {
     _sub?.cancel();
     _channel?.sink.close();
     _events.close();
+    _reconnected.close();
     connected.dispose();
   }
 }
