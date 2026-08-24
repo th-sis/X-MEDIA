@@ -153,24 +153,40 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 		// CheckLinks 批量检测（取前 20 条）
 		valid := s.checkResults(ctx, results)
 		saved := false
-		// [V7 §6.4 / §27.4] A2: 累计转存失败次数, 跑完后汇报, 防止 20 条全失败时
-		// 用户只见 not_found 不知发生了什么. 保留每次 continue 的 errno 细节到任务.
-		failedTransfers := 0
-		var lastErr error
+		// [V7 §6.4 / §27.4] A2 全分支可观测: 真机实测发现只统计 SaveShare 失败
+		// 不够 — 候选可能在更早的分支被静默跳过 (链接无效/无对应账号/驱动错误/
+		// 非转存驱动/签票失败), 用户同样只见 not_found 不知根因.
+		// 所有 continue 分支分类计数, 批次结束统一汇总上报.
+		var (
+			candidates      int   // 进入检测的有效候选数
+			skippedInvalid  int   // 链接检测判无效
+			skippedNoAcc    int   // 该资源网盘类型无已登录账号
+			skippedDriver   int   // 驱动实例获取失败
+			skippedNoSaver  int   // 驱动未实现 ShareSaver
+			failedTransfers int   // ensureSaveRoot / SaveShare 失败
+			signFailures    int   // 转存成功但签票失败
+			lastErr         error // 最近一次携带信息的错误
+		)
 		for _, r := range results {
 			if !valid[r.ShareURL] {
+				skippedInvalid++
 				continue
 			}
+			candidates++
 			acc, ok := sourceAccount(accounts, r.Source)
 			if !ok {
+				skippedNoAcc++
 				continue
 			}
 			drv, err := s.driverGet(ctx, acc.ID)
 			if err != nil {
+				skippedDriver++
+				lastErr = err
 				continue
 			}
 			saver, ok := drv.(driver.ShareSaver)
 			if !ok {
+				skippedNoSaver++
 				continue // 驱动未实现转存，尝试下一个
 			}
 			s.push(t, domain.StageTransferring, fmt.Sprintf("正在转存到 %s ...", r.Source), 70)
@@ -189,10 +205,10 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 				failedTransfers++
 				if err != nil {
 					lastErr = err
-				} else if savedRes == nil {
+				} else {
 					lastErr = domain.Errorf(domain.CodeInternal, "转存驱动返回空结果")
 				}
-				continue // A2: 此处不再静默 — 计入失败计数 + 保留 err
+				continue
 			}
 			// [V7 §6.9.2] 转存成功后, 把文件名改写为统一模板
 			// (失败时静默, 不影响 P1 命中 — 见 post_rename.go).
@@ -207,21 +223,23 @@ func (s *Service) runP1(ctx context.Context, t *domain.ResolveTask) bool {
 				saved = true
 				break
 			}
+			signFailures++
+			lastErr = err
 		}
 		if saved {
 			return true
 		}
-		// [V7 §6.4 / §27.4] A2: 整个关键词批次都没成功转存, 汇报失败统计让 UI 显示原因.
-		if failedTransfers > 0 {
-			detail := fmt.Sprintf("%d 个候选资源转存全部失败", failedTransfers)
-			if lastErr != nil {
-				detail += " (最近错误: " + lastErr.Error() + ")"
-			}
-			s.push(t, domain.StageSaveFailed, detail, 72)
-			if t.ErrorMsg == "" && lastErr != nil {
-				t.ErrorMsg = "转存失败: " + lastErr.Error()
-				_ = s.tasks.Update(context.Background(), t)
-			}
+		// [V7 §6.4 / §27.4] A2: 批次未命中, 按分类计数汇总上报, 让 UI/用户看到
+		// 每个候选到底死在哪一环, 而不是一个笼统的 not_found.
+		summary := fmt.Sprintf("候选 %d 个未命中: 链接无效 %d, 无匹配账号 %d, 驱动错误 %d, 非转存驱动 %d, 转存失败 %d, 签票失败 %d",
+			len(results), skippedInvalid, skippedNoAcc, skippedDriver, skippedNoSaver, failedTransfers, signFailures)
+		if lastErr != nil {
+			summary += " (最近错误: " + lastErr.Error() + ")"
+		}
+		s.push(t, domain.StageSaveFailed, summary, 72)
+		if t.ErrorMsg == "" && lastErr != nil {
+			t.ErrorMsg = "P1 未命中: " + lastErr.Error()
+			_ = s.tasks.Update(context.Background(), t)
 		}
 	}
 	return false

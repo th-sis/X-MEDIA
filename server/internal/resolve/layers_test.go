@@ -372,6 +372,87 @@ func TestRunP1NoAccountReported(t *testing.T) {
 	}
 }
 
+// [V7 §6.4 / §27.4] A2 全分支可观测: 候选资源因"该网盘类型无已登录账号"
+// 被跳过时, 汇总 stage 必须给出分类计数, 而非笼统 not_found.
+func TestRunP1SkipReasonsCountedInSummary(t *testing.T) {
+	s, _, tasks, _, _ := newTestService(t, func(s *Service) {
+		// 搜索结果全是 quark 资源.
+		s.pansearchSearch = func(context.Context, pansearch.SearchRequest) ([]domain.PanSearchResult, error) {
+			return []domain.PanSearchResult{
+				{Title: "Q1", Source: "quark", ShareURL: "https://pan.quark.cn/s/q1", Quality: "4K"},
+				{Title: "Q2", Source: "quark", ShareURL: "https://pan.quark.cn/s/q2", Quality: "1080P"},
+			}, nil
+		}
+		// 链接检测全部有效 (隔离掉默认 mock 只认 115 URL 的干扰).
+		s.pansearchCheck = func(_ context.Context, items []pansearch.CheckItem) ([]pansearch.CheckResult, error) {
+			out := make([]pansearch.CheckResult, 0, len(items))
+			for _, it := range items {
+				out = append(out, pansearch.CheckResult{URL: it.URL, State: "ok"})
+			}
+			return out, nil
+		}
+		// 但已登录账号只有 115 → quark 资源全部"无匹配账号".
+		s.accountsFn = func(context.Context) []domain.Account {
+			return []domain.Account{{ID: 7, DriverType: "115_Open", IsActive: true}}
+		}
+	})
+
+	task := newTestTask()
+	ok := s.runP1(context.Background(), task)
+	if ok {
+		t.Fatalf("全部候选无匹配账号时 P1 应返回 false")
+	}
+	var last *domain.ResolveTask
+	for _, u := range tasks.updated {
+		if u.Stage == domain.StageSaveFailed {
+			last = u
+		}
+	}
+	if last == nil {
+		t.Fatalf("应 push StageSaveFailed 汇总, 实际: %v", stageSeq(tasks.updated))
+	}
+	if !strings.Contains(last.StageDetail, "无匹配账号 2") {
+		t.Fatalf("汇总应包含 '无匹配账号 2', got %q", last.StageDetail)
+	}
+}
+
+// failConfigRepo Get 恒报错 — 用于让 TicketSigner.secret 失败.
+type failConfigRepo struct{}
+
+func (f *failConfigRepo) Get(context.Context, string) (string, bool, error) {
+	return "", false, domain.Errorf(domain.CodeInternal, "config store unavailable")
+}
+func (f *failConfigRepo) Set(context.Context, string, string) error { return nil }
+func (f *failConfigRepo) All(context.Context) (map[string]string, error) {
+	return nil, domain.Errorf(domain.CodeInternal, "config store unavailable")
+}
+
+// [V7 §6.4 / §27.4] A2 全分支可观测: 转存成功但签票失败也必须计入汇总,
+// 不能静默丢掉 (真机实测曾出现 transferring 后直接 not_found 的盲区).
+func TestRunP1SignFailureCountedInSummary(t *testing.T) {
+	s, _, tasks, _, _ := newTestService(t)
+	// 注入 Get 恒失败的 configs → TicketSigner.secret 返回 err → Sign 失败.
+	s.signer = playback.NewTicketSigner(&failConfigRepo{})
+
+	task := newTestTask()
+	ok := s.runP1(context.Background(), task)
+	if ok {
+		t.Fatalf("签票失败时 P1 应返回 false")
+	}
+	var last *domain.ResolveTask
+	for _, u := range tasks.updated {
+		if u.Stage == domain.StageSaveFailed {
+			last = u
+		}
+	}
+	if last == nil {
+		t.Fatalf("应 push StageSaveFailed 汇总, 实际: %v", stageSeq(tasks.updated))
+	}
+	if !strings.Contains(last.StageDetail, "签票失败 1") {
+		t.Fatalf("汇总应包含 '签票失败 1', got %q", last.StageDetail)
+	}
+}
+
 // stageSeqP 把 push 序列翻译为人类可读串用于失败断言信息.
 func stageSeq(updates []*domain.ResolveTask) []string {
 	out := make([]string, 0, len(updates))
