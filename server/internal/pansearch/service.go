@@ -127,20 +127,34 @@ func (s *Service) Search(ctx context.Context, req SearchRequest) ([]domain.PanSe
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil
 	}
-	var merged struct {
-		MergedByType map[string][]struct {
-			URL      string `json:"url"`
-			Password string `json:"password"`
-			Note     string `json:"note"`
-			Datetime string `json:"datetime"`
-			Source   string `json:"source"`
-		} `json:"merged_by_type"`
+	// [V7 §8 实测契约修正] PanSou 上游实际响应 (2026-08-24 抓取自 GHCR 镜像):
+	//   {"code":0,"message":"success","data":{"total":n,"merged_by_type":{...}}}
+	// 与 V7 §8.2 文档示例 (顶层 merged_by_type) 不一致, 以实测契约为准.
+	var envelope struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    *struct {
+			Total        int `json:"total"`
+			MergedByType map[string][]struct {
+				URL      string `json:"url"`
+				Password string `json:"password"`
+				Note     string `json:"note"`
+				Datetime string `json:"datetime"`
+				Source   string `json:"source"`
+			} `json:"merged_by_type"`
+		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&merged); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
 		return nil, err
 	}
+	// [V7 §8 实测] PanSou 用 code≠0 表示业务失败 (如 TG 频道不可达、参数错误),
+	// 不视为 HTTP 错误但需当降级处理 — 仍返回 nil 让上层走 P1 跳过逻辑.
+	if envelope.Code != 0 || envelope.Data == nil {
+		return nil, nil
+	}
+	merged := envelope.Data.MergedByType
 	var results []domain.PanSearchResult
-	for diskType, links := range merged.MergedByType {
+	for diskType, links := range merged {
 		source := mapDiskType(diskType)
 		for _, l := range links {
 			results = append(results, domain.PanSearchResult{
