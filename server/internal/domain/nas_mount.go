@@ -146,8 +146,55 @@ func ResolveNASPath(rawPath string, mounts NASMountMap, detected []MountInfoEntr
 	if hit, src := matchDetected(cleaned, detected); hit != "" {
 		return hit, src
 	}
+	// 4.5: [V7 §9.4 UI-first] SMB 源别名推导 — 用户填的是主机视角路径
+	// (/mnt/BTORAGE/...), 容器只认挂载点 /mnt/nas-root ← //ip/BTORAGE.
+	// 从 share 名推导 "/BTORAGE"、"/mnt/BTORAGE" 等主机侧别名前缀再匹配,
+	// 让用户无需理解容器路径即可完成配置.
+	if hit, _ := matchMountMap(cleaned, DeriveNASMountMap(detected)); hit != "" {
+		return hit, "smb_alias"
+	}
 	// 5: passthrough (assume already container-internal)
 	return cleaned, "passthrough"
+}
+
+// DeriveNASMountMap 从探测到的 SMB 挂载源推导主机侧别名映射.
+// Source 形如 //192.168.7.154/BTORAGE → 取 share 名 "BTORAGE",
+// 生成 {"/BTORAGE": target, "/mnt/BTORAGE": target} 两个候选别名.
+// 非 SMB 挂载 (overlay/nfs/本地盘) 不参与推导.
+func DeriveNASMountMap(detected []MountInfoEntry) NASMountMap {
+	out := NASMountMap{}
+	for _, m := range detected {
+		if m.Filesystem != "cifs" && m.Filesystem != "smbfs" {
+			continue
+		}
+		src := strings.TrimRight(strings.TrimSpace(m.Source), "/")
+		if !strings.HasPrefix(src, "//") {
+			continue
+		}
+		rest := strings.TrimPrefix(src, "//") // host/share[/sub...]
+		hostEnd := strings.IndexByte(rest, '/')
+		if hostEnd <= 0 {
+			continue
+		}
+		sharePart := rest[hostEnd+1:] // share[/sub...]
+		if idx := strings.IndexByte(sharePart, '/'); idx >= 0 {
+			sharePart = sharePart[:idx]
+		}
+		share := strings.TrimSpace(sharePart)
+		if share == "" || m.MountTarget == "" {
+			continue
+		}
+		target := strings.TrimRight(m.MountTarget, "/")
+		if target == "" {
+			continue
+		}
+		for _, alias := range []string{"/" + share, "/mnt/" + share} {
+			if _, exists := out[alias]; !exists {
+				out[alias] = target
+			}
+		}
+	}
+	return out
 }
 
 // matchMountMap 在 mounts 里查 longest prefix 匹配（先精确后 prefix）。
@@ -182,8 +229,7 @@ func matchMountMap(p string, mounts NASMountMap) (string, string) {
 }
 
 // matchDetected 跟 matchMountMap 一样，但 source 来源是 auto_detected。
-func matchDetected(p string, detected []MountInfoEntry) (string, string) {
-	if len(detected) == 0 {
+func matchDetected(p string, detected []MountInfoEntry) (string, string) {	if len(detected) == 0 {
 		return "", ""
 	}
 	for _, m := range detected {

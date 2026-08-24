@@ -310,6 +310,8 @@ func NewRouter(d Deps) http.Handler {
 				r.Route("/nas-sources", func(r chi.Router) {
 					r.Get("/", h.listNASSources)
 					r.Post("/", h.createNASSource)
+					// [V7 §9.4 UI-first] 存量路径批量重映射（修复历史宿主视角路径）。
+					r.Post("/reresolve", h.nasSourceReresolveAll)
 					r.Put("/{id}", h.updateNASSource)
 					r.Delete("/{id}", h.deleteNASSource)
 					r.Post("/{id}/toggle", h.toggleNASSource)

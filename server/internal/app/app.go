@@ -99,6 +99,11 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		days := configInt(stBundle.store.Configs, domain.ConfigSubscriptionSearchDays, 7)
 		xm.subSearcher.Start(context.Background(), time.Duration(days)*24*time.Hour)
 	}
+	// [V7 §9.4 UI-first] NAS source 有效性周期自监测（5 分钟 stat 一轮），
+	// 列表页与 Capabilities 三态自动刷新，无需人工点「检测」。
+	if xm.indexEngine != nil {
+		xm.indexEngine.StartHealthMonitor(context.Background(), 5*time.Minute)
+	}
 
 	httpSrv, err := wireHTTPServer(cfg, logs, stBundle, core, svc, xm)
 	if err != nil {

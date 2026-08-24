@@ -127,6 +127,44 @@ func TestProbeNASMountsParsing(t *testing.T) {
 	}
 }
 
+// [V7 §9.4 实测回归] 用户在 UI 填主机视角路径 (/mnt/BTORAGE/Asia-Movie),
+// 容器内只认得挂载点 /mnt/nas-root ← //192.168.7.154/BTORAGE.
+// DeriveNASMountMap 从 SMB 源的 share 名推导主机侧别名前缀, 让
+// ResolveNASPath 能完成 host→container 映射 — 这是"用户只管填路径,
+// 系统自动识别内网挂载并映射"的核心一步.
+func TestDeriveNASMountMap_FromSMBSource(t *testing.T) {
+	detected := []MountInfoEntry{
+		{Filesystem: "cifs", MountTarget: "/mnt/nas-root", Source: "//192.168.7.154/BTORAGE"},
+		{Filesystem: "overlay", MountTarget: "/", Source: "overlay"}, // 非 SMB, 忽略
+	}
+	got := DeriveNASMountMap(detected)
+	want := NASMountMap{
+		"/BTORAGE":     "/mnt/nas-root",
+		"/mnt/BTORAGE": "/mnt/nas-root",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("derived = %v, want %v", got, want)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("derived[%q] = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestResolveNASPath_ViaSMBAlias(t *testing.T) {
+	detected := []MountInfoEntry{
+		{Filesystem: "cifs", MountTarget: "/mnt/nas-root", Source: "//192.168.7.154/BTORAGE"},
+	}
+	got, src := ResolveNASPath("/mnt/BTORAGE/Asia-Movie", nil, detected)
+	if got != "/mnt/nas-root/Asia-Movie" {
+		t.Fatalf("resolved = %q, want /mnt/nas-root/Asia-Movie", got)
+	}
+	if src != "smb_alias" {
+		t.Fatalf("source = %q, want smb_alias", src)
+	}
+}
+
 // helpers
 
 func nas_mountKey(host string) string {

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -31,6 +32,8 @@ import (
 type nasMountResolver struct {
 	// mounts 用户在 configs 表配置的 host_path -> container_path 映射。
 	mounts domain.NASMountMap
+	// configs 用于 smb_alias 命中后的映射持久化（可为 nil，仅内存态）。
+	configs domain.ConfigRepository
 	// detected 启动时 /proc/self/mountinfo 探测结果。
 	detected []domain.MountInfoEntry
 }
@@ -43,6 +46,7 @@ func newNASMountResolver(configs domain.ConfigRepository) *nasMountResolver {
 		mounts: domain.NASMountMap{},
 	}
 	if configs != nil {
+		r.configs = configs
 		if all, err := configs.All(context.Background()); err == nil {
 			r.mounts = domain.LoadNASMountMap(all)
 		}
@@ -56,11 +60,106 @@ func newNASMountResolver(configs domain.ConfigRepository) *nasMountResolver {
 // resolve 把用户填的路径 rewrite 成容器内路径。返回 rewrite 后的字符串。
 // rewrite 失败（empty）时返回原值。
 func (r *nasMountResolver) resolve(rawPath string) string {
-	if rawPath == "" {
-		return rawPath
-	}
-	resolved, _ := domain.ResolveNASPath(rawPath, r.mounts, r.detected)
+	resolved, _ := r.resolveWithSource(rawPath)
 	return resolved
+}
+
+// deployHint [V7 §9.4 UI-first] 容器内没有任何 SMB 挂载时给出部署侧指引 —
+// Docker 无法在运行时追加 volume，挂载只能在容器创建时完成；把这一步的
+// 操作说明直接给到用户，而不是让用户面对一句"路径不可访问"。
+func (r *nasMountResolver) deployHint() string {
+	if len(r.detected) > 0 {
+		return ""
+	}
+	return "检测到容器内未挂载任何 NAS 卷：请在 NAS 主机上执行 export NAS_MEDIA_PATH=<宿主机SMB目录> && docker compose up -d --force-recreate xmedia 后重试。"
+}
+
+// resolveWithSource 同 resolve, 但额外返回映射来源:
+// explicit / auto_detected / smb_alias / passthrough.
+func (r *nasMountResolver) resolveWithSource(rawPath string) (string, string) {
+	if rawPath == "" {
+		return rawPath, "passthrough"
+	}
+	return domain.ResolveNASPath(rawPath, r.mounts, r.detected)
+}
+
+// persistDerivedMapping [V7 §9.4 UI-first] 当路径经由 SMB 别名推导命中时,
+// 把该别名映射持久化进 configs (nas_mount_<alias> = target):
+//   - 重启后仍生效 (resolver 启动时会 LoadNASMountMap);
+//   - 在管理后台「主机路径映射」界面可见、可编辑、可删除.
+// 同时同步内存缓存, 使后续请求直接走 explicit 路径.
+func (r *nasMountResolver) persistDerivedMapping(ctx context.Context, raw, resolved string) {
+	if r.configs == nil || len(r.detected) == 0 {
+		return
+	}
+	for alias, target := range domain.DeriveNASMountMap(r.detected) {
+		var rest string
+		switch {
+		case raw == alias:
+			rest = ""
+		case strings.HasPrefix(raw, alias+"/"):
+			rest = strings.TrimPrefix(raw, alias)
+		default:
+			continue
+		}
+		if target+rest != resolved {
+			continue
+		}
+		key := domain.ConfigKeyPrefixNASMount + alias
+		if v, ok, _ := r.configs.Get(ctx, key); ok && v == target {
+			if _, exists := r.mounts[alias]; !exists {
+				r.mounts[alias] = target
+			}
+			return
+		}
+		if err := r.configs.Set(ctx, key, target); err == nil {
+			r.mounts[alias] = target
+		}
+		return
+	}
+}
+
+// reresolveResult 单条存量 source 的重解析结果.
+type reresolveResult struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Old     string `json:"old_path"`
+	New     string `json:"new_path"`
+	Source  string `json:"source"`
+	Changed bool   `json:"changed"`
+	Error   string `json:"error,omitempty"`
+}
+
+// reresolveAllPaths [V7 §9.4 UI-first] 对全部 NAS source 的存量 path 重新走
+// 一遍映射改写 — 用于修复历史版本入库的主机视角路径 (如 /mnt/BTORAGE/*),
+// 用户无需逐条手工编辑. 只改写, 不触碰 enabled/file_count 等字段.
+func (h *Handler) reresolveAllPaths(ctx context.Context) []reresolveResult {
+	out := []reresolveResult{}
+	if h.nasSources == nil || h.nasMountResolver == nil {
+		return out
+	}
+	list, err := h.nasSources.List(ctx)
+	if err != nil {
+		return out
+	}
+	for _, src := range list {
+		item := reresolveResult{ID: src.ID, Name: src.Name, Old: src.Path, New: src.Path}
+		newPath, source := h.nasMountResolver.resolveWithSource(src.Path)
+		item.Source = source
+		if newPath != src.Path {
+			changed := *src
+			changed.Path = newPath
+			if uerr := h.nasSources.Update(ctx, &changed); uerr != nil {
+				item.Error = uerr.Error()
+			} else {
+				item.New = newPath
+				item.Changed = true
+				h.nasMountResolver.persistDerivedMapping(ctx, src.Path, newPath)
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 // nasSourceView 是返回给前端的展示态（[V7 §9.4+ 扩展] G1.C，G18 UI 用）。
@@ -150,9 +249,13 @@ func (h *Handler) createNASSource(w http.ResponseWriter, r *http.Request) {
 	// 已正确 rewrite 的路径不在此处阻断（容器挂载延迟由部署侧处理）。
 	if path == rawPath {
 		if info, err := os.Stat(path); err != nil || !info.IsDir() {
-			writeErr(w, domain.Errorf(domain.CodeValidation,
-				"路径 %q 在容器内不可访问，且未找到可用的主机路径映射；请先在「NAS 配置 → 主机路径映射」中添加 %q -> <容器路径> 的映射，或直接使用容器内路径（如 /mnt/nas-root/...）",
-				rawPath, rawPath))
+			msg := fmt.Sprintf("路径 %q 在容器内不可访问，且未找到可用的主机路径映射；可直接使用容器内路径（如 /mnt/nas-root/...），或在「NAS 配置 → 主机路径映射」中添加映射", rawPath)
+			if h.nasMountResolver != nil {
+				if hint := h.nasMountResolver.deployHint(); hint != "" {
+					msg += "。" + hint
+				}
+			}
+			writeErr(w, domain.Errorf(domain.CodeValidation, "%s", msg))
 			return
 		}
 	}
@@ -182,6 +285,20 @@ func (h *Handler) createNASSource(w http.ResponseWriter, r *http.Request) {
 	}
 	src.ID = id
 	writeOK(w, viewFromNASSource(src))
+}
+
+// nasSourceReresolveAll POST /api/admin/nas-sources/reresolve
+// [V7 §9.4 UI-first] 存量 source 路径批量重映射：历史版本入库的主机视角路径
+// (/mnt/BTORAGE/*) 一键改写为容器内路径，无需逐条手工编辑。
+func (h *Handler) nasSourceReresolveAll(w http.ResponseWriter, r *http.Request) {
+	results := h.reresolveAllPaths(r.Context())
+	changed := 0
+	for _, it := range results {
+		if it.Changed {
+			changed++
+		}
+	}
+	writeOK(w, map[string]any{"total": len(results), "changed": changed, "results": results})
 }
 
 func (h *Handler) updateNASSource(w http.ResponseWriter, r *http.Request) {
@@ -231,16 +348,25 @@ func (h *Handler) updateNASSource(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// [V7 改造 commit #4] 主机路径 -> 容器路径自动 rewrite.
+		// [UI-first 增强] 命中别名映射时同步持久化（与 create 一致）。
 		newPath := rawPath
 		if h.nasMountResolver != nil {
-			newPath = h.nasMountResolver.resolve(rawPath)
+			var src string
+			newPath, src = h.nasMountResolver.resolveWithSource(rawPath)
+			if src == "smb_alias" || src == "auto_detected" {
+				h.nasMountResolver.persistDerivedMapping(r.Context(), rawPath, newPath)
+			}
 		}
 		// [defensive] passthrough 且容器内不可达时拒绝，避免主机路径静默入库。
 		if newPath == rawPath {
 			if info, err := os.Stat(newPath); err != nil || !info.IsDir() {
-				writeErr(w, domain.Errorf(domain.CodeValidation,
-					"路径 %q 在容器内不可访问，且未找到可用的主机路径映射；请先在「NAS 配置 → 主机路径映射」中添加 %q -> <容器路径> 的映射，或直接使用容器内路径（如 /mnt/nas-root/...）",
-					rawPath, rawPath))
+				msg := fmt.Sprintf("路径 %q 在容器内不可访问，且未找到可用的主机路径映射；可直接使用容器内路径（如 /mnt/nas-root/...），或在「NAS 配置 → 主机路径映射」中添加映射", rawPath)
+				if h.nasMountResolver != nil {
+					if hint := h.nasMountResolver.deployHint(); hint != "" {
+						msg += "。" + hint
+					}
+				}
+				writeErr(w, domain.Errorf(domain.CodeValidation, "%s", msg))
 				return
 			}
 		}
