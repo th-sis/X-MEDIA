@@ -233,6 +233,15 @@ func TestScanNASFullPipeline(t *testing.T) {
 			if item.ExternalID != 19995 && item.ExternalID != 0 {
 				t.Fatalf("匹配的 external_id 错误: %#v", item)
 			}
+			// [P0 秒开契约] playback.serveLocal 用 claims.FileID 直接
+			// os.Stat + ServeFile, 因此 matched 条目的 FileID 必须是
+			// 可定位的真实文件路径 (绝对), 否则 P0 播放链路 400.
+			if item.FileID == "" {
+				t.Fatalf("matched 条目 FileID 不应为空 (serveLocal 需要): %#v", item)
+			}
+			if _, err := os.Stat(item.FileID); err != nil {
+				t.Fatalf("matched 条目 FileID 应为可 stat 的路径 %q: %v", item.FileID, err)
+			}
 		case domain.MatchOrphaned:
 			orphaned++
 		case domain.MatchUnconfirmed:

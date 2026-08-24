@@ -283,8 +283,12 @@ func (s *Service) processFile(ctx context.Context, root, path string) (bool, boo
 		Year:           clean.Year,
 		SourceType:     "nas",
 		FilePath:       rel,
-		FileFormat:     clean.Format,
-		MatchStatus:    domain.MatchOrphaned,
+		// [P0 秒开契约] playback.serveLocal 直接 os.Stat(claims.FileID),
+		// NAS 条目必须把可定位的真实路径写入 FileID (网盘条目的 FileID
+		// 是驱动文件 ID, 语义在此分叉, 见 playback/stream.go case "nas").
+		FileID:      path,
+		FileFormat:  clean.Format,
+		MatchStatus: domain.MatchOrphaned,
 	}
 	if matchedMedia != nil {
 		m.ExternalID = matchedMedia.ExternalID

@@ -41,13 +41,13 @@ func scanMediaLibrary(sc interface{ Scan(...any) error }) (*domain.MediaLibrary,
 
 const mediaLibraryCols = `id, external_id, external_source, media_type, title, title_orig,
 	poster_url, backdrop_url, overview, year, vote_avg, vote_count, genres, runtime, seasons, episodes,
-	seasons_json, cast, extra, cached_at, last_accessed_at`
+	seasons_json, "cast", extra, cached_at, last_accessed_at`
 
 func (r *mediaLibraryRepo) Upsert(ctx context.Context, m *domain.MediaLibrary) (int64, error) {
 	res, err := r.db.write.ExecContext(ctx, `
 		INSERT INTO media_library(
 			external_id, external_source, media_type, title, title_orig, poster_url, backdrop_url, overview,
-			year, vote_avg, vote_count, genres, runtime, seasons, episodes, seasons_json, cast, extra, cached_at)
+			year, vote_avg, vote_count, genres, runtime, seasons, episodes, seasons_json, "cast", extra, cached_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
 		ON CONFLICT(external_id, external_source) DO UPDATE SET
 			media_type=excluded.media_type, title=excluded.title, title_orig=excluded.title_orig,

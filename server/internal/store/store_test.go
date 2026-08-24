@@ -111,6 +111,29 @@ func TestAccountSetDefaultOrder(t *testing.T) {
 	}
 }
 
+// TestMediaLibrarySearchByTitle 真实 SQL 回归: mediaLibraryCols 中 cast 列
+// 是 SQLite 保留字, 裸用会导致 SELECT 解析错误 (near ",") — 匹配器 (§9.2)
+// 依赖此查询找候选, 坏了会让 NAS 扫描全部 unconfirmed.
+func TestMediaLibrarySearchByTitle(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	if _, err := s.MediaLibrary.Upsert(ctx, &domain.MediaLibrary{
+		ExternalID: 27205, ExternalSource: "tmdb", MediaType: "movie",
+		Title: "Inception", TitleOrig: "Inception", Year: 2010,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	cands, err := s.MediaLibrary.SearchByTitle(ctx, "Inception", 5)
+	if err != nil {
+		t.Fatalf("SearchByTitle 不应报 SQL 错误: %v", err)
+	}
+	if len(cands) == 0 || cands[0].ExternalID != 27205 {
+		t.Fatalf("应命中 Inception 条目, got %d candidates", len(cands))
+	}
+}
+
 func TestAuthStateUpsert(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
