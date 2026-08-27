@@ -127,7 +127,7 @@ const nasChipMessage = computed(() => {
 const healthyChips = computed(() => [
   { key: "tmdb", label: "TMDB", ok: tmdbOk.value, message: tmdbOk.value ? "已连接" : (xMediaHealth.value?.validation?.tmdb_key?.message ?? "未配置") },
   { key: "pansearch", label: "PanSou", ok: pansearchOk.value, message: pansearchOk.value ? "可用" : "不可达" },
-  { key: "account", label: "网盘账号", ok: accountOk.value, message: accountOk.value ? `${loggedInDrivers.value.length} 个已登录` : (loggedInDrivers.value.length === 0 ? "未登录" : `${loggedInDrivers.value.length} 个已登录`) },
+  { key: "account", label: "网盘账号", ok: accountOk.value, message: loggedInDrivers.value.length > 0 ? `${loggedInDrivers.value.length} 个已登录` : "未登录" },
   { key: "nas", label: "NAS", ok: nasOk.value, message: nasChipMessage.value },
   { key: "index", label: "索引", ok: indexOk.value, message: indexOk.value ? "已完成" : "未完成" },
 ]);
@@ -539,12 +539,12 @@ onMounted(() => {
         </article>
       </section>
 
-      <!-- V7 §27.1/§27.4：首屏健康概览卡，每个 chip 一键跳到对应配置入口。 -->
-      <section class="dashboard-health-card" aria-label="V7 §27 系统健康概览">
+      <!-- 首屏健康概览卡：每个 chip 一键跳到对应配置入口。 -->
+      <section class="dashboard-health-card" aria-label="系统健康概览">
         <header class="dashboard-health-card__head">
           <div>
             <h3>系统健康概览</h3>
-            <p>TMDB / PanSou / 网盘账号 / NAS / 索引 五个子系统状态（V7 §27.1）</p>
+            <p>TMDB / PanSou / 网盘账号 / NAS / 索引 子系统状态</p>
           </div>
           <router-link class="dashboard-link-button" to="/admin?page=x-media">
             <i class="fas fa-sliders" />去配置

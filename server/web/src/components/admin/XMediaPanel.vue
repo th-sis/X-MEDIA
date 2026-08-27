@@ -26,6 +26,12 @@ import {
   deleteNASMount,
   probeNASMounts,
   resolveNASPath,
+  fetchSMBMounts,
+  createSMBMount,
+  deleteSMBMount,
+  mountSMBMount,
+  unmountSMBMount,
+  refreshSMBMounts,
   type HealthStatus,
   type StateSnapshot,
   type NASSource,
@@ -33,6 +39,8 @@ import {
   type NASMount,
   type NASDetectedMount,
   type NASResolveResult,
+  type SMBMount,
+  type SMBMountCreatePayload,
 } from "@/api/xmedia";
 // [P0#2] 健康检查面板补"查看日志"按钮，复用 logs API
 import { logsApi, type LogEntry } from "@/api/logs";
@@ -87,6 +95,16 @@ const nasProbeBusy = ref(false);
 const nasDeleteMountBusy = ref<string | null>(null);
 // [76007b2 UI-first] 存量路径批量重映射
 const nasReresolveBusy = ref(false);
+// [V7 §9.4 UI-first] 容器内 SMB 挂载点管理（特权 mount.cifs）状态
+const smbMounts = ref<SMBMount[]>([]);
+const smbMountsLoading = ref(false);
+const smbMountCreating = ref(false);
+const smbMountBusyId = ref<number | null>(null);
+const smbNewName = ref("");
+const smbNewURL = ref("");
+const smbNewRemotePath = ref("");
+const smbNewMountPoint = ref("");
+const smbMountFormOpen = ref(false);
 // 实时预览：用户在 nasNewPath 输入时，debounce 300ms 调一次 resolve
 const nasResolvePreview = ref<NASResolveResult | null>(null);
 const nasResolveBusy = ref(false);
@@ -174,13 +192,15 @@ async function loadAll() {
   // 正确做法: 每个 promise 各自 catch 返回零值, 这里只用 Promise.all 拿顺序, 不让它 reject。
   // 对比: DashboardManagement.vue 用 Promise.allSettled 走同条接口, 没有这个 bug。
   try {
-    const [snap, h, cfg, nasList, mountsView] = await Promise.all([
+    const [snap, h, cfg, nasList, mountsView, smbList] = await Promise.all([
       fetchSnapshot().catch(() => null),
       fetchHealth().catch(() => null),
       fetchXMediaConfigs().catch(() => ({})),
       fetchNASSources().catch(() => []),
       // [V7 §9.4+ 扩展 G18] mount map 拉取（容错，失败不阻塞主流程）
       fetchNASMounts().catch(() => null),
+      // [V7 §9.4 UI-first] 容器内 SMB 挂载点列表（容错）
+      fetchSMBMounts().catch(() => []),
     ]);
     // null-safe 赋值: 任一接口失败时不污染其它状态
     if (snap) snapshot.value = snap;
@@ -192,6 +212,7 @@ async function loadAll() {
       nasMounts.value = mountsView.configured ?? [];
       nasDetected.value = mountsView.detected ?? [];
     }
+    if (smbList) smbMounts.value = smbList;
   } catch (e) {
     toast.error(getApiErrorMessage(e, "状态读取失败"));
   } finally {
@@ -354,9 +375,115 @@ function scheduleResolvePreview() {
 function sourceLabel(source: NASResolveResult["source"] | undefined): string {
   if (source === "explicit") return "手动映射";
   if (source === "auto_detected") return "自动探测";
-  // [76007b2] SMB 源别名推导：命中后后端已自动持久化映射到 configs
-  if (source === "smb_alias") return "SMB 别名映射（已自动保存）";
+  if (source === "smb_alias") return "SMB 别名映射";
   return "原样透传";
+}
+
+// [V7 §9.4 UI-first] 容器内 SMB 挂载点操作：创建（立即挂载）/挂载/卸载/删除/刷新
+
+async function createSMBMountNow() {
+  const name = smbNewName.value.trim();
+  const smbUrl = smbNewURL.value.trim();
+  const mountPoint = smbNewMountPoint.value.trim();
+  if (!name || !smbUrl || !mountPoint) {
+    toast.error("名称、SMB URL 和容器内挂载点都不能为空");
+    return;
+  }
+  smbMountCreating.value = true;
+  try {
+    const payload: SMBMountCreatePayload = {
+      name,
+      smb_url: smbUrl,
+      mount_point: mountPoint,
+    };
+    if (smbNewRemotePath.value.trim()) payload.remote_path = smbNewRemotePath.value.trim();
+    const created = await createSMBMount(payload);
+    smbMounts.value = [...smbMounts.value, created];
+    // 清空表单
+    smbNewName.value = "";
+    smbNewURL.value = "";
+    smbNewRemotePath.value = "";
+    smbNewMountPoint.value = "";
+    smbMountFormOpen.value = false;
+    toast.success(`已挂载 "${created.name}"`);
+    // 挂载成功后媒体源可能新增了可访问路径，同步刷新诊断卡
+    await loadAll();
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "挂载失败"));
+  } finally {
+    smbMountCreating.value = false;
+  }
+}
+
+async function mountSMBMountById(id: number, name: string) {
+  smbMountBusyId.value = id;
+  try {
+    const updated = await mountSMBMount(id);
+    smbMounts.value = smbMounts.value.map((m) => (m.id === id ? updated : m));
+    toast.success(`已挂载 "${name}"`);
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "挂载失败"));
+  } finally {
+    smbMountBusyId.value = null;
+  }
+}
+
+async function unmountSMBMountById(id: number, name: string) {
+  smbMountBusyId.value = id;
+  try {
+    const updated = await unmountSMBMount(id);
+    smbMounts.value = smbMounts.value.map((m) => (m.id === id ? updated : m));
+    toast.success(`已卸载 "${name}"`);
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "卸载失败"));
+  } finally {
+    smbMountBusyId.value = null;
+  }
+}
+
+async function deleteSMBMountById(id: number, name: string) {
+  if (!confirm(`确认删除并卸载 "${name}"？`)) return;
+  smbMountBusyId.value = id;
+  try {
+    await deleteSMBMount(id);
+    smbMounts.value = smbMounts.value.filter((m) => m.id !== id);
+    toast.success("已删除");
+    await loadAll();
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "删除失败"));
+  } finally {
+    smbMountBusyId.value = null;
+  }
+}
+
+async function refreshSMBMountsNow() {
+  smbMountsLoading.value = true;
+  try {
+    const list = await refreshSMBMounts();
+    smbMounts.value = list;
+    toast.success("已按实际挂载状态校准");
+    await loadAll();
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "状态刷新失败"));
+  } finally {
+    smbMountsLoading.value = false;
+  }
+}
+
+function smbStateTone(state: string): "ok" | "error" | "warning" | "pending" {
+  if (state === "mounted") return "ok";
+  if (state === "error") return "error";
+  if (state === "mounting") return "pending";
+  return "warning";
+}
+
+function smbStateLabel(state: string): string {
+  switch (state) {
+    case "mounted": return "已挂载";
+    case "mounting": return "挂载中…";
+    case "error": return "挂载失败";
+    default: return "未挂载";
+  }
 }
 
 // [76007b2 UI-first] 存量路径批量重映射；后端会即时回写可达性。
@@ -541,23 +668,22 @@ onUnmounted(() => {
     </SectionTabBar>
 
     <div v-show="activeTab === OVERVIEW_TAB">
-      <SettingsCard title="能力预检（§6.3）" :loading="loading">
-        <SettingsRow label="NAS 状态（§27.4）">
+      <SettingsCard title="能力预检" :loading="loading">
+        <SettingsRow label="NAS 状态">
           <div class="nas-status-line">
             <AdminStatusPill :tone="nasStatusTone">{{ nasStatusLabel }}</AdminStatusPill>
             <span class="settings-help">
-              已配置 {{ snapshot?.capabilities.nas_total_sources ?? 0 }} 个源 · 启用 {{ snapshot?.capabilities.nas_enabled_sources ?? 0 }} 个 · 可达性每 5 分钟自动复测
+              已配置 {{ snapshot?.capabilities.nas_total_sources ?? 0 }} 个源 · 启用 {{ snapshot?.capabilities.nas_enabled_sources ?? 0 }} 个 · 每 5 分钟自动复测
             </span>
           </div>
-          <!-- [76007b2] not_accessible 时给出新逻辑下的自愈操作：批量重映射 → 去 NAS 配置 -->
           <div v-if="nasStatus === 'not_accessible'" class="row-actions" style="margin-top: 8px;">
             <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
               {{ nasReresolveBusy ? "重映射中…" : "批量重新映射存量路径" }}
             </AppButton>
-            <AppButton type="button" variant="ghost" @click="goToTab(NAS_TAB)">去 NAS 诊断</AppButton>
+            <AppButton type="button" variant="ghost" @click="goToTab(NAS_TAB)">去 NAS 配置</AppButton>
           </div>
           <p class="row-hint" v-if="nasStatus === 'not_accessible'">
-            若刚完成部署且尚未挂载 NAS 卷，请先到「NAS 配置」页按顶部诊断卡的命令执行。
+            若尚未挂载 NAS 卷，可到「NAS 配置」页添加 SMB 挂载点，或按顶部诊断卡的命令完成挂载后重新映射。
           </p>
         </SettingsRow>
         <SettingsRow label="NAS 索引完成">
@@ -567,10 +693,10 @@ onUnmounted(() => {
         </SettingsRow>
         <SettingsRow label="PanSou 可用">
           <AdminStatusPill :tone="pansearchAvailable ? 'success' : 'warning'">
-            {{ pansearchAvailable ? "可用" : "不可达（P1 降级）" }}
+            {{ pansearchAvailable ? "可用" : "不可达（搜索降级）" }}
           </AdminStatusPill>
         </SettingsRow>
-        <SettingsRow label="磁力兜底（P2）">
+        <SettingsRow label="磁力兜底">
           <AdminStatusPill :tone="snapshot?.capabilities.magnet_enabled ? 'success' : 'warning'">
             {{ snapshot?.capabilities.magnet_enabled ? "已启用" : "已关闭" }}
           </AdminStatusPill>
@@ -593,7 +719,7 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === INDEX_TAB">
-      <SettingsCard title="索引引擎（§9.7.1）" :loading="loading">
+      <SettingsCard title="索引引擎" :loading="loading">
         <SettingsRow label="当前状态">
           <AdminStatusPill :tone="snapshot?.index_scanning ? 'warning' : 'success'">
             {{ snapshot?.index_scanning ? "扫描中" : indexProgress?.status === "done" ? "空闲" : "待扫描" }}
@@ -625,8 +751,8 @@ onUnmounted(() => {
         </SettingsRow>
       </SettingsCard>
 
-      <!-- [P2#7] media_library LRU 配置 + 立即清理 -->
-      <SettingsCard title="TMDB 媒体库 LRU 管理（§15.2）" :loading="loading">
+      <!-- media_library LRU 配置 + 立即清理 -->
+      <SettingsCard title="TMDB 媒体库管理" :loading="loading">
         <SettingsRow label="当前条目数">
           <span class="settings-help">{{ indexedTotal }}</span>
         </SettingsRow>
@@ -673,7 +799,7 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === TMDB_TAB">
-      <SettingsCard title="TMDB 配置（Phase 8）" :loading="loading">
+      <SettingsCard title="TMDB 配置" :loading="loading">
         <SettingsRow label="API Key">
           <AppInput v-model="configs.tmdb_api_key" placeholder="未配置（演示模式）" class="config-input" />
         </SettingsRow>
@@ -699,7 +825,7 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === PANSEARCH_TAB">
-      <SettingsCard title="盘搜服务配置（Phase 8）" :loading="loading">
+      <SettingsCard title="盘搜服务配置" :loading="loading">
         <SettingsRow label="服务地址">
           <AppInput v-model="configs.pansearch_url" placeholder="http://localhost:8888" class="config-input" />
         </SettingsRow>
@@ -722,17 +848,16 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === NAS_TAB">
-      <!-- [实测回归·重新设计] 系统诊断卡：把"为什么不可用"和"下一步做什么"放在页面 C 位 -->
+      <!-- 系统诊断卡：把"为什么不可用"和"下一步做什么"放在页面 C 位 -->
       <SettingsCard title="NAS 系统诊断">
-        <!-- 状态一：容器未挂载 NAS 卷 → 部署三步指令（唯一需要部署侧做的事） -->
+        <!-- 状态一：容器未挂载 NAS 卷 -->
         <div v-if="diagState === 'no_mount'" class="nas-diag nas-diag--danger">
           <p class="nas-diag__title">
             <i class="fas fa-triangle-exclamation" />
-            容器内未检测到任何 NAS 挂载 — 这是一切"路径不可达 / 扫描为空"的根因
+            未检测到 NAS 挂载 — 这是路径不可达 / 扫描为空的根因
           </p>
           <p class="nas-diag__desc">
-            Docker 的目录挂载只能在容器创建时完成（运行时无法追加）。请在 NAS 主机上按顺序执行以下命令，
-            然后回到本页点击「批量重新映射路径」：
+            可在下方「SMB 挂载点」直接添加并自动挂载；或按以下命令在 NAS 主机上挂载，完成后点击「重新检测」：
           </p>
           <pre class="nas-diag__cmd">{{ deployHintText }}</pre>
           <div class="row-actions" style="margin-top: 8px;">
@@ -740,19 +865,18 @@ onUnmounted(() => {
               <i class="fas fa-copy" /> 复制命令
             </AppButton>
             <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
-              {{ nasReresolveBusy ? "重试中…" : "已执行，重新检测" }}
+              {{ nasReresolveBusy ? "重试中…" : "重新检测" }}
             </AppButton>
           </div>
         </div>
-        <!-- 状态二：已挂载但存在不可达源 → 一键修复 -->
+        <!-- 状态二：已挂载但存在不可达源 -->
         <div v-else-if="diagState === 'fixable'" class="nas-diag nas-diag--warn">
           <p class="nas-diag__title">
             <i class="fas fa-wrench" />
             {{ nasInaccessibleCount }} 个媒体源不可达
           </p>
           <p class="nas-diag__desc">
-            历史版本可能保存了主机视角路径。点击「批量重新映射」自动改写并即时刷新可达性；
-            若修复后仍不可达，请检查路径是否真实存在。
+            路径可能仍为主机视角。点击「批量重新映射」自动改写并刷新可达性；若仍不可达，请检查路径是否存在。
           </p>
           <div class="row-actions" style="margin-top: 8px;">
             <AppButton type="button" variant="primary" :disabled="nasReresolveBusy" @click="runReresolve">
@@ -768,14 +892,104 @@ onUnmounted(() => {
         <!-- 无源：引导添加 -->
         <div v-else class="nas-diag nas-diag--warn">
           <p class="nas-diag__title"><i class="fas fa-circle-info" /> 尚未配置媒体源</p>
-          <p class="nas-diag__desc">在下方表单填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别内网挂载、完成映射并持续监测有效性。</p>
+          <p class="nas-diag__desc">填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别挂载并监测可达性。</p>
         </div>
       </SettingsCard>
 
-      <!-- [实测回归] 映射详情属于高级内容, 折叠收起, 不再占据页面 C 位 -->
+      <!-- 容器内 SMB 挂载点管理：填 smb:// URL + 容器内挂载点，后端自动 mount.cifs，重启自动重挂。 -->
+      <SettingsCard title="SMB 挂载点" :loading="smbMountsLoading">
+        <SettingsRow label="说明">
+          <p class="row-hint">
+            填入 SMB 共享地址（如 <code>smb://user:pass@192.168.7.154/BTORAGE</code>）与容器内挂载点
+            （如 <code>/mnt/nas-root/Asia-Movie</code>），保存后自动挂载并持久化，容器重启后自动重挂。
+            挂载成功即可在下方「NAS 媒体源」按容器内路径添加源；无密共享可用 <code>//host/share</code> 格式。
+          </p>
+        </SettingsRow>
+
+        <SettingsRow label="新建挂载">
+          <div v-if="!smbMountFormOpen" class="row-actions">
+            <AppButton type="button" variant="primary" @click="smbMountFormOpen = true">
+              <i class="fas fa-plus" /> 添加 SMB 挂载
+            </AppButton>
+            <AppButton type="button" variant="ghost" :disabled="smbMountsLoading" @click="refreshSMBMountsNow">
+              {{ smbMountsLoading ? "校准中…" : "校准状态" }}
+            </AppButton>
+          </div>
+          <div v-else class="nas-add-row" style="flex-wrap: wrap;">
+            <AppInput v-model="smbNewName" placeholder="名称（如 Asia-Movie）" class="config-input" />
+            <AppInput
+              v-model="smbNewURL"
+              placeholder="SMB URL（smb://user:pass@host/share 或 //host/share）"
+              class="config-input"
+              style="min-width: 320px;"
+            />
+            <AppInput v-model="smbNewRemotePath" placeholder="共享内子目录（可选）" class="config-input" />
+            <AppInput v-model="smbNewMountPoint" placeholder="容器内挂载点（/mnt/nas-root/...）" class="config-input" />
+            <div class="row-actions">
+              <AppButton type="button" variant="primary" :disabled="smbMountCreating" @click="createSMBMountNow">
+                {{ smbMountCreating ? "挂载中…" : "保存并挂载" }}
+              </AppButton>
+              <AppButton type="button" variant="ghost" @click="smbMountFormOpen = false">取消</AppButton>
+            </div>
+          </div>
+        </SettingsRow>
+
+        <SettingsRow label="挂载点列表">
+          <div v-if="smbMounts.length === 0" class="nas-empty">
+            暂无 SMB 挂载点。可直接在上方添加，或通过 docker-compose 在部署侧挂载 NAS 卷（系统会自动探测）。
+          </div>
+          <table v-else class="nas-table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>SMB 地址</th>
+                <th>容器内挂载点</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in smbMounts" :key="m.id">
+                <td>{{ m.name }}</td>
+                <td class="path-cell" :title="m.smb_url">{{ m.smb_url }}</td>
+                <td class="path-cell" :title="m.mount_point">{{ m.mount_point }}</td>
+                <td>
+                  <AdminStatusPill :status="smbStateTone(m.state)" :label="smbStateLabel(m.state)" />
+                  <p v-if="m.last_error" class="nas-mount-error" :title="m.last_error">{{ m.last_error }}</p>
+                </td>
+                <td class="actions-cell">
+                  <AppButton
+                    v-if="m.state !== 'mounted'"
+                    type="button"
+                    variant="ghost"
+                    :disabled="smbMountBusyId === m.id"
+                    @click="mountSMBMountById(m.id, m.name)"
+                  >
+                    {{ smbMountBusyId === m.id ? "挂载中…" : "挂载" }}
+                  </AppButton>
+                  <AppButton
+                    v-else
+                    type="button"
+                    variant="ghost"
+                    :disabled="smbMountBusyId === m.id"
+                    @click="unmountSMBMountById(m.id, m.name)"
+                  >
+                    {{ smbMountBusyId === m.id ? "卸载中…" : "卸载" }}
+                  </AppButton>
+                  <AppButton type="button" variant="ghost" :disabled="smbMountBusyId === m.id" @click="deleteSMBMountById(m.id, m.name)">
+                    删除
+                  </AppButton>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </SettingsRow>
+      </SettingsCard>
+
+      <!-- 映射详情属于高级内容，折叠收起 -->
       <details class="nas-advanced">
-        <summary>高级：主机路径 → 容器路径映射详情</summary>
-      <SettingsCard title="NAS 主机路径映射（[V7 §9.4+ 扩展 G18]）" :loading="nasMountsLoading">
+        <summary>高级：主机路径 → 容器路径映射</summary>
+      <SettingsCard title="主机路径映射" :loading="nasMountsLoading">
         <SettingsRow label="操作">
           <div class="row-actions">
             <AppButton type="button" variant="ghost" :disabled="nasProbeBusy" @click="probeNASMountsNow">
@@ -786,10 +1000,7 @@ onUnmounted(() => {
             </AppButton>
           </div>
           <p class="row-hint">
-            主机路径由后端按以下优先级自动映射：① 手动添加的映射（见下表）②
-            <code>/proc/self/mountinfo</code> SMB/cifs 探测 ③
-            SMB 源别名推导（从 //内网IP/share 自动识别，命中后自动保存为手动映射）④
-            原样透传（容器内路径）。新增媒体源时，输入主机路径即可，下方有实时预览。
+            添加媒体源时输入主机路径即可，后端按「手动映射 → 自动探测 → SMB 别名推导」的优先级自动改写为容器内路径，下方有实时预览。
           </p>
         </SettingsRow>
 
@@ -848,13 +1059,13 @@ onUnmounted(() => {
       </SettingsCard>
       </details>
 
-      <SettingsCard title="NAS 媒体源（[V7 §9.4+ 扩展 G1.C]）" :loading="nasLoading">
+      <SettingsCard title="NAS 媒体源" :loading="nasLoading">
         <SettingsRow label="添加媒体源">
           <div class="nas-add-row">
             <AppInput v-model="nasNewName" placeholder="名称（可读标识）" class="config-input" />
             <AppInput
               v-model="nasNewPath"
-              placeholder="主机路径（绝对路径，如 /mnt/BTORAGE，后端自动映射）"
+              placeholder="主机路径（绝对路径，如 /mnt/BTORAGE，自动映射）"
               class="config-input"
               @input="scheduleResolvePreview"
             />
@@ -900,7 +1111,7 @@ onUnmounted(() => {
 
         <SettingsRow label="媒体源列表">
           <div v-if="nasSources.length === 0" class="nas-empty">
-            尚未配置 NAS 媒体源。在上方添加后点击"扫描"将进入索引引擎。
+            尚未配置 NAS 媒体源，在上方添加后即可扫描。
           </div>
           <table v-else class="nas-table">
             <thead>
@@ -954,17 +1165,17 @@ onUnmounted(() => {
             </AppButton>
           </div>
           <p class="row-hint" v-if="nasSources.length === 0">
-            ⚠ 当前没有 NAS 媒体源。请先在上方表单填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别内网挂载并完成映射入库。
+            ⚠ 当前没有 NAS 媒体源。请先在上方填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别挂载并完成映射入库。
           </p>
           <p class="row-hint" v-else>
-            可达性每 5 分钟自动复测并刷新「可访问」列；「全部可访问性检测」会同时统计文件数。「批量重新映射路径」用于把历史版本保存的主机视角路径改写为容器内路径。
+            可达性每 5 分钟自动复测；「全部可访问性检测」会同时统计文件数，「批量重新映射路径」用于修复历史保存的主机视角路径。
           </p>
         </SettingsRow>
       </SettingsCard>
     </div>
 
     <div v-show="activeTab === HEALTH_TAB">
-      <SettingsCard title="健康检查（§27.4）" :loading="loading">
+      <SettingsCard title="健康检查" :loading="loading">
         <SettingsRow label="总体状态">
           <AdminStatusPill :tone="health?.validation?.ok ? 'success' : 'warning'">
             {{ health?.validation?.ok ? "全部通过" : "存在警告" }}
@@ -996,7 +1207,7 @@ onUnmounted(() => {
             去配置
           </AppButton>
         </SettingsRow>
-        <SettingsRow label="NAS 状态（§27.4）">
+        <SettingsRow label="NAS 状态">
           <AdminStatusPill :tone="nasStatusTone">
             {{ nasStatusLabel }}
           </AdminStatusPill>
@@ -1288,6 +1499,16 @@ onUnmounted(() => {
 .nas-table .actions-cell {
   display: flex;
   gap: 6px;
+}
+/* [V7 §9.4 UI-first] SMB 挂载点错误提示：单行截断 + hover 全文 */
+.nas-mount-error {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #b91c1c;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .row-hint {
   margin: 6px 0 0;

@@ -262,3 +262,73 @@ export function probeNASMounts(): Promise<{ detected: NASDetectedMount[]; count:
 export function resolveNASPath(path: string): Promise<NASResolveResult> {
   return http.post<NASResolveResult>("/admin/nas-mounts/resolve", { path });
 }
+
+// ===== [V7 §9.4 UI-first] 容器内 SMB 挂载点管理（特权 mount.cifs）=====
+//
+// 后端端点（api/smb_mounts_admin.go）：
+//   GET    /api/admin/smb-mounts                列表（含实时状态）
+//   POST   /api/admin/smb-mounts                新增并立即挂载
+//   PUT    /api/admin/smb-mounts/{id}           更新并重新挂载
+//   DELETE /api/admin/smb-mounts/{id}           卸载并删除
+//   POST   /api/admin/smb-mounts/{id}/mount     手动（重新）挂载
+//   POST   /api/admin/smb-mounts/{id}/unmount   手动卸载
+//   POST   /api/admin/smb-mounts/refresh        全量按 /proc/self/mounts 校准状态
+//
+// 安全：后端返回的 smb_url 密码已脱敏（user:***@host/share）。
+
+export type SMBMountStateType = "unmounted" | "mounting" | "mounted" | "error";
+
+export interface SMBMount {
+  id: number;
+  name: string;
+  smb_url: string; // 脱敏后展示（密码为 ***）
+  remote_path: string;
+  mount_point: string;
+  uid: number;
+  gid: number;
+  state: SMBMountStateType;
+  last_error?: string;
+  last_checked_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SMBMountCreatePayload {
+  name: string;
+  smb_url: string;
+  remote_path?: string;
+  mount_point: string;
+  uid?: number;
+  gid?: number;
+}
+
+export function fetchSMBMounts(): Promise<SMBMount[]> {
+  return http.get<SMBMount[]>("/admin/smb-mounts");
+}
+
+export function createSMBMount(payload: SMBMountCreatePayload): Promise<SMBMount> {
+  return http.post<SMBMount>("/admin/smb-mounts", payload);
+}
+
+export function updateSMBMount(
+  id: number,
+  payload: Partial<SMBMountCreatePayload>
+): Promise<SMBMount> {
+  return http.put<SMBMount>(`/admin/smb-mounts/${id}`, payload);
+}
+
+export function deleteSMBMount(id: number): Promise<{ deleted: number }> {
+  return http.del<{ deleted: number }>(`/admin/smb-mounts/${id}`);
+}
+
+export function mountSMBMount(id: number): Promise<SMBMount> {
+  return http.post<SMBMount>(`/admin/smb-mounts/${id}/mount`, {});
+}
+
+export function unmountSMBMount(id: number): Promise<SMBMount> {
+  return http.post<SMBMount>(`/admin/smb-mounts/${id}/unmount`, {});
+}
+
+export function refreshSMBMounts(): Promise<SMBMount[]> {
+  return http.post<SMBMount[]>("/admin/smb-mounts/refresh", {});
+}
