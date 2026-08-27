@@ -35,6 +35,7 @@ import (
 	"xmedia/internal/playback"
 	"xmedia/internal/resolve"
 	"xmedia/internal/settings"
+	"xmedia/internal/smbmount"
 	"xmedia/internal/tmdb"
 	"xmedia/internal/upload"
 	"xmedia/internal/websocket"
@@ -83,6 +84,9 @@ type Deps struct {
 	LastRestartReason string
 	// [V7 §9.4+ 扩展] NAS 媒体源仓储（G1.C：admin CRUD handler 用）。
 	NASSources domain.NASSourceRepository
+	// [V7 §9.4 UI-first] 容器内 SMB 挂载点仓储 + 服务（特权 mount.cifs）。
+	SMBMounts domain.SMBMountRepository
+	SMBMountSvc *smbmount.Service
 }
 
 // Handler 持有处理请求所需的依赖。
@@ -127,6 +131,8 @@ type Handler struct {
 	nasMountResolver *nasMountResolver
 	// [V7 整改 commit #4] NAS mount mapper admin endpoints.
 	nasMountAdmin *nasMountAdminHandlers
+	// [V7 §9.4 UI-first] 容器内 SMB 挂载点管理端点（特权 mount.cifs）。
+	smbMountAdmin *smbMountAdminHandlers
 }
 
 // NewRouter 装配并返回 HTTP 路由（含内嵌管理页面）。
@@ -189,6 +195,8 @@ func NewRouter(d Deps) http.Handler {
 	h.configAdmin = &configAdminHandlers{configs: d.Configs, bus: d.Bus}
 	// [V7 整改 commit #4] NAS mount admin endpoints.
 	h.nasMountAdmin = &nasMountAdminHandlers{configs: d.Configs, resolver: h.nasMountResolver}
+	// [V7 §9.4 UI-first] SMB 挂载点管理端点（DB 未接线时 handler 内置 nil 防御）。
+	h.smbMountAdmin = &smbMountAdminHandlers{repo: d.SMBMounts, svc: d.SMBMountSvc}
 
 	r := chi.NewRouter()
 	r.Use(trackResponseCommit)
@@ -332,6 +340,18 @@ func NewRouter(d Deps) http.Handler {
 					r.Post("/resolve", h.nasMountAdmin.handleNASMountsResolve)
 					r.Put("/{host_path}", h.nasMountAdmin.handleNASMountsUpdate)
 					r.Delete("/{host_path}", h.nasMountAdmin.handleNASMountsDelete)
+				})
+			}
+			// [V7 §9.4 UI-first] 容器内 SMB 挂载点管理（特权 mount.cifs）。
+			if h.smbMountAdmin != nil {
+				r.Route("/smb-mounts", func(r chi.Router) {
+					r.Get("/", h.smbMountAdmin.list)
+					r.Post("/", h.smbMountAdmin.create)
+					r.Post("/refresh", h.smbMountAdmin.refresh)
+					r.Put("/{id}", h.smbMountAdmin.update)
+					r.Delete("/{id}", h.smbMountAdmin.delete)
+					r.Post("/{id}/mount", h.smbMountAdmin.mount)
+					r.Post("/{id}/unmount", h.smbMountAdmin.unmount)
 				})
 			}
 				// §1.4 Step 2：TMDB 配置专用端点（保存即测试 / 仅测试）

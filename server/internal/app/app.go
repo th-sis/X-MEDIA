@@ -21,6 +21,7 @@ import (
 	"xmedia/internal/logx"
 	"xmedia/internal/playback"
 	"xmedia/internal/settings"
+	"xmedia/internal/smbmount"
 	"xmedia/internal/store"
 	"xmedia/internal/tmdb"
 	"xmedia/internal/upload"
@@ -47,6 +48,8 @@ type App struct {
 	cacheRetention *cacheretention.Service
 	tmdb           *tmdb.Service     // [P2#7] 启动时主动 LRU 检查
 	hub            *websocket.Hub   // [P2#8] Shutdown 时广播 server_stopping
+	// [V7 §9.4 UI-first] 容器内 SMB 挂载点服务 (特权 mount.cifs).
+	smbMount       *smbmount.Service
 	httpSrv        *http.Server
 	httpBaseCancel context.CancelFunc
 }
@@ -132,6 +135,7 @@ func New(ctx context.Context, opts Options) (*App, error) {
 		cacheRetention: svc.cacheRetention,
 		tmdb:           xm.tmdb, // [P2#7] 启动时主动 LRU 检查
 		hub:            xm.hub,  // [P2#8] Shutdown 时广播 server_stopping
+		smbMount:       xm.smbMount,
 		httpSrv:        httpSrv,
 		httpBaseCancel: httpBaseCancel,
 	}, nil
@@ -161,6 +165,14 @@ func (a *App) Run(ctx context.Context) error {
 		removed := a.tmdb.MaybeEvict(context.Background())
 		if removed > 0 {
 			a.log.Info("启动时 LRU 淘汰", "removed", removed)
+		}
+	}
+	// [V7 §9.4 UI-first] 启动时把 DB 中已保存的 SMB 挂载点重新挂上
+	// （特权 mount.cifs），取代部署侧 docker-compose bind-mount 手动配置。
+	// 失败仅记日志，不阻塞 HTTP 启动；各挂载点状态由 RefreshState 校准。
+	if a.smbMount != nil {
+		if err := a.smbMount.ReattachOnStartup(context.Background()); err != nil {
+			a.log.Warn("SMB 挂载点重挂失败", "err", err)
 		}
 	}
 	errCh := make(chan error, 1)

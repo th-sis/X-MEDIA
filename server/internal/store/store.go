@@ -24,6 +24,8 @@ type Store struct {
 	SearchHistory       domain.SearchHistoryRepository
 	RateLimits          domain.RateLimitRepository
 	NASSources          domain.NASSourceRepository
+	// [V7 §9.4 UI-first] 容器内 SMB 挂载点持久化.
+	SMBMounts           domain.SMBMountRepository
 }
 
 // New 基于已打开的 DB 构造仓储集合。
@@ -50,5 +52,7 @@ func New(db *DB) *Store {
 		SearchHistory:       &searchHistoryRepo{db: db},
 		RateLimits:          &rateLimitRepo{db: db},
 		NASSources:          &nasSourceRepo{db: db},
+		// [V7 §9.4 UI-first] 容器内 SMB 挂载点持久化 (特权 mount.cifs).
+		SMBMounts:           &smbMountRepo{db: db},
 	}
 }

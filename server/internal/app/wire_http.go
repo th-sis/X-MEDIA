@@ -65,6 +65,9 @@ func wireHTTPServer(cfg config.Config, logs *logx.Manager, st *storeBundle, core
 		MediaIndex:        st.store.MediaIndex,
 		// [V7 §9.4+ 扩展 G1.C] NAS 媒体源仓储接线（admin CRUD 7 端点依赖）
 		NASSources:        st.store.NASSources,
+		// [V7 §9.4 UI-first] 容器内 SMB 挂载点仓储 + 服务（特权 mount.cifs 挂载管理）。
+		SMBMounts:         st.store.SMBMounts,
+		SMBMountSvc:       xm.smbMount,
 		Hub:               xm.hub,
 		Bus:               core.bus,
 		ServerVersion:      xmediaVersion,

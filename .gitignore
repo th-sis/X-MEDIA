@@ -12,6 +12,12 @@
 /server/.tmp_*/
 /server/.tmp/
 
+# 真机调试临时产物（cookie/响应缓存/探测脚本，含敏感信息不入库）
+/.codelf/cookies.txt
+/.codelf/tmp_h.json
+/.codelf/ws_probe.ps1
+/.codelf/*.probe
+
 # Go 构建产物（cmd/xmedia → ./bin/xmedia.exe）
 /server/bin/
 /server/out/

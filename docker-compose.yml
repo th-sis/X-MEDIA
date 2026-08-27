@@ -88,6 +88,13 @@ services:
       # ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}：本地无 NAS 时用占位目录避免启动失败。
       # 容器内扫描的子目录列表由 nas_local_paths 配置（admin 后台动态管理）。
       - ${NAS_MEDIA_PATH:-/tmp/xmedia-nas-placeholder}:/mnt/nas-root:ro
+      # [V7 §9.4 UI-first] 容器内 SMB 挂载点管理（可选）：
+      #   在管理后台「NAS 配置 → SMB 挂载点」填 smb:// 地址与容器内挂载点，后端自动
+      #   mount.cifs。这需要容器以特权模式运行 + 镜像内安装 cifs-utils。默认不启用
+      #   （privileged 有安全影响）；需要时取消下面两行注释并配置 cifs-utils 镜像：
+      # cap_add:
+      #   - SYS_ADMIN
+      # privileged: true
     networks:
       - xmedia-net
 

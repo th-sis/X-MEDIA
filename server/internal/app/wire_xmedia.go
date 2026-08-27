@@ -13,6 +13,7 @@ import (
 	"xmedia/internal/indexengine"
 	"xmedia/internal/logx"
 	"xmedia/internal/media"
+	"xmedia/internal/smbmount"
 	"xmedia/internal/pansearch"
 	"xmedia/internal/playback"
 	"xmedia/internal/resolve"
@@ -35,6 +36,8 @@ type xmediaBundle struct {
 	indexEngine *indexengine.Service
 	// [A3] §20 订阅自动搜寻器
 	subSearcher *resolve.SubscriptionSearcher
+	// [V7 §9.4 UI-first] 容器内 SMB 挂载点服务
+	smbMount *smbmount.Service
 }
 
 func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *logx.Manager) *xmediaBundle {
@@ -180,6 +183,10 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		Log:           logs.For("subscription-searcher"),
 	})
 
+	// [V7 §9.4 UI-first] 容器内 SMB 挂载服务 — 启动时重挂 DB 中所有 saved 记录,
+	// 取代 docker-compose bind-mount 的部署侧手动配置.
+	smbSvc := smbmount.New(st.store.SMBMounts, smbmount.NewExecMounter(), logs.For("smbmount"))
+
 	// V7 §11.1.1：配置变更（resolve_priority / nas_enabled / magnet_* 等）发布
 	// eventbus.ConfigChanged，Hub 监听后通过 WS 推 capabilities_changed 消息。
 	eventbus.Subscribe(core.bus, func(_ context.Context, evt eventbus.ConfigChanged) {
@@ -199,6 +206,7 @@ func wireXMedia(st *storeBundle, svc *servicesBundle, core *coreBundle, logs *lo
 		rateLimiter: rateLimiter,
 		indexEngine: indexEngine,
 		subSearcher: subSearcher,
+		smbMount:    smbSvc,
 	}
 }
 
