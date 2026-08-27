@@ -6,7 +6,6 @@ package smbmount
 import (
 	"context"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -34,23 +33,6 @@ func TestMount_CredentialsFilePermissions(t *testing.T) {
 	body := string(data)
 	if !strings.Contains(body, "username=alice") || !strings.Contains(body, "password=s3cret") {
 		t.Fatalf("credentials body wrong: %q", body)
-	}
-}
-
-// TestMount_NoPasswordUser 拒绝无密共享空 username/password 场景.
-func TestMount_NoPasswordUser(t *testing.T) {
-	if _, err := exec.LookPath("mount.cifs"); err != nil {
-		t.Skip("mount.cifs not installed")
-	}
-	err := (&execMounter{mountBin: "mount.cifs"}).Mount(context.Background(), MountRequest{
-		SMBURL:     "smb://guest@192.168.7.154/BTORAGE",
-		MountPoint: "/tmp/x-media-smbmount-no-pass-test",
-	})
-	if err == nil {
-		t.Fatalf("无 pass 应失败")
-	}
-	if !strings.Contains(err.Error(), "user/password") {
-		t.Fatalf("err = %q, expected to mention user/password", err.Error())
 	}
 }
 

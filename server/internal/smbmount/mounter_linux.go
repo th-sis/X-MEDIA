@@ -11,7 +11,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -60,40 +59,27 @@ func writeCredentialsFile(user, pass string) (path string, cleanup func(), err e
 	return path, cleanup, nil
 }
 
+// resolveSMBCreds 定义在 service.go（无 build tag，跨平台可测）。
+
 // Mount 在容器内调用 mount.cifs, 失败返回可读错误.
 // 要求: 容器 privileged + 主机已安装 cifs-utils; 调用方负责先创建 MountPoint 目录.
+// 无凭据 URL (//host/share) 走 guest 挂载.
 func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	if req.MountPoint == "" || req.SMBURL == "" {
 		return errors.New("smbmount: smb_url and mount_point are required")
 	}
-	// 解析 SMB URL, 取 user/pass
-	user := req.Username
-	pass := req.Password
-	if user == "" || pass == "" {
-		u, err := url.Parse(req.SMBURL)
-		if err != nil {
-			return fmt.Errorf("smbmount: parse smb url: %w", err)
-		}
-		if u.User != nil {
-			if user == "" {
-				user = u.User.Username()
-			}
-			if p, ok := u.User.Password(); ok && pass == "" {
-				pass = p
-			}
-		}
-		if pass == "" {
-			user = ""
-		}
-	}
+	user, pass := resolveSMBCreds(req)
+	var opts string
 	if user == "" {
-		return errors.New("smbmount: smb url missing user/password (无密共享应直接传 //host/share)")
+		opts = fmt.Sprintf("guest,uid=%d,gid=%d,iocharset=utf8,vers=3.0", req.UID, req.GID)
+	} else {
+		credFile, cleanup, err := writeCredentialsFile(user, pass)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		opts = fmt.Sprintf("credentials=%s,uid=%d,gid=%d,iocharset=utf8,vers=3.0", credFile, req.UID, req.GID)
 	}
-	credFile, cleanup, err := writeCredentialsFile(user, pass)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
 
 	// 构造 source: //host/share[/sub/...]
 	source := strings.TrimPrefix(req.SMBURL, "smb://")
@@ -110,7 +96,7 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 
 	args := []string{
 		"-t", "cifs",
-		"-o", fmt.Sprintf("credentials=%s,uid=%d,gid=%d,iocharset=utf8,vers=3.0", credFile, req.UID, req.GID),
+		"-o", opts,
 		source, dst,
 	}
 	cmd := exec.CommandContext(ctx, m.mountBin, args...)

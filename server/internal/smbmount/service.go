@@ -9,11 +9,38 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
 	"xmedia/internal/domain"
 )
+
+// resolveSMBCreds 从 MountRequest 解析用户名/密码。
+// 两者都为空表示 guest 挂载（无密共享，URL 形如 //host/share 或 smb://host/share）。
+// 放无 build tag 文件以便跨平台单测（不依赖 mount.cifs 二进制）。
+func resolveSMBCreds(req MountRequest) (user, pass string) {
+	user, pass = req.Username, req.Password
+	if user == "" || pass == "" {
+		u, err := url.Parse(req.SMBURL)
+		if err != nil {
+			return "", ""
+		}
+		if u.User != nil {
+			if user == "" {
+				user = u.User.Username()
+			}
+			if p, ok := u.User.Password(); ok && pass == "" {
+				pass = p
+			}
+		}
+		// 只有用户名没有密码（或完全无 userinfo）→ 匿名访问
+		if pass == "" {
+			user = ""
+		}
+	}
+	return user, pass
+}
 
 // Mounter 抽象 mount.cifs / umount 调用 — 见 mounter_linux.go 与 mounter_other.go.
 // 共享类型定义在此文件（无 build tag），平台文件只提供实现。

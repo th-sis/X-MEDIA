@@ -290,3 +290,27 @@ func TestService_ReattachOnStartup_IgnoresFailures(t *testing.T) {
 		t.Fatalf("ReattachOnStartup 失败不应中断整体, got %v", err)
 	}
 }
+
+// TestResolveSMBCreds 验证凭据解析：带凭据 / 无凭据（guest）各形态。
+func TestResolveSMBCreds(t *testing.T) {
+	cases := []struct {
+		name     string
+		req      MountRequest
+		wantUser string
+		wantPass string
+	}{
+		{"smb url with creds", MountRequest{SMBURL: "smb://alice:s3cret@192.168.7.154/BTORAGE"}, "alice", "s3cret"},
+		{"smb url no creds", MountRequest{SMBURL: "smb://192.168.7.154/BTORAGE"}, "", ""},
+		{"unc no creds", MountRequest{SMBURL: "//192.168.7.154/BTORAGE"}, "", ""},
+		{"explicit override", MountRequest{SMBURL: "smb://alice:s3cret@h/s", Username: "bob", Password: "pw2"}, "bob", "pw2"},
+		{"user only no pass -> guest", MountRequest{SMBURL: "smb://guest@h/s"}, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u, p := resolveSMBCreds(c.req)
+			if u != c.wantUser || p != c.wantPass {
+				t.Fatalf("resolveSMBCreds = (%q,%q), want (%q,%q)", u, p, c.wantUser, c.wantPass)
+			}
+		})
+	}
+}
