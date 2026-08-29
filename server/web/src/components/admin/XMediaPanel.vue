@@ -25,6 +25,7 @@ import {
   resolveNASPath,
   fetchSMBMounts,
   createSMBMount,
+  updateSMBMount,
   deleteSMBMount,
   mountSMBMount,
   unmountSMBMount,
@@ -94,6 +95,37 @@ const smbNewURL = ref("");
 const smbNewRemotePath = ref("");
 const smbNewMountPoint = ref("");
 const smbMountFormOpen = ref(false);
+// [edit-smb-todo] 行内编辑挂载点：editingId 非 null 时该行进入编辑态
+const smbEditingId = ref<number | null>(null);
+const smbEditDraft = ref<{
+  name: string;
+  smb_url: string;
+  remote_path: string;
+  mount_point: string;
+  uid: number;
+  gid: number;
+} | null>(null);
+const smbEditBusy = ref(false);
+// [edit-smb-todo] 表单实时校验：挂载点必须是绝对路径；SMB URL 必须 smb:// 或 // 开头
+const mountPointPattern = /^\/[A-Za-z0-9._\-\/]*$/;
+function validateSMBURL(s: string): boolean {
+  const trimmed = s.trim();
+  return trimmed.startsWith("smb://") || trimmed.startsWith("//");
+}
+const smbNewInvalid = computed(() => {
+  if (!smbNewName.value.trim()) return "名称不能为空";
+  if (!validateSMBURL(smbNewURL.value)) return "SMB 地址必须以 smb:// 或 // 开头";
+  if (!mountPointPattern.test(smbNewMountPoint.value.trim())) return "挂载点必须是绝对路径";
+  return "";
+});
+function validateSMBEdit(): string {
+  if (!smbEditDraft.value) return "";
+  const d = smbEditDraft.value;
+  if (!d.name.trim()) return "名称不能为空";
+  if (!validateSMBURL(d.smb_url)) return "SMB 地址必须以 smb:// 或 // 开头";
+  if (!mountPointPattern.test(d.mount_point.trim())) return "挂载点必须是绝对路径";
+  return "";
+}
 // 实时预览：用户在 nasNewPath 输入时，debounce 300ms 调一次 resolve
 const nasResolvePreview = ref<NASResolveResult | null>(null);
 const nasResolveBusy = ref(false);
@@ -258,6 +290,26 @@ async function testNewPath() {
   } finally {
     nasTestingPath.value = false;
   }
+}
+
+// [edit-smb-todo] 一键建源：从已挂载 SMB 中选一个，自动填名称+路径
+const quickAddPickerOpen = ref(false);
+const quickAddMountId = ref<number | null>(null);
+function openQuickAddFromSMB() {
+  // 默认选第一个未对应 source 的已挂载 SMB（用 mount_point 比对）
+  const mountedList = smbMounts.value.filter((m) => m.state === "mounted");
+  const existing = new Set(nasSources.value.map((s) => s.path));
+  const firstUnused = mountedList.find((m) => !existing.has(m.mount_point));
+  quickAddMountId.value = firstUnused?.id ?? mountedList[0]?.id ?? null;
+  quickAddPickerOpen.value = true;
+}
+function applyQuickAdd() {
+  const m = smbMounts.value.find((x) => x.id === quickAddMountId.value);
+  if (!m) return;
+  nasNewName.value = m.name;
+  nasNewPath.value = m.mount_point;
+  scheduleResolvePreview();
+  quickAddPickerOpen.value = false;
 }
 
 async function createNASSource() {
@@ -435,6 +487,53 @@ async function deleteSMBMountById(id: number, name: string) {
     toast.error(getApiErrorMessage(e, "删除失败"));
   } finally {
     smbMountBusyId.value = null;
+  }
+}
+
+// [edit-smb-todo] 行内编辑：取消/开始/保存
+function startEditSMBMount(m: SMBMount) {
+  smbEditingId.value = m.id;
+  smbEditDraft.value = {
+    name: m.name,
+    smb_url: m.smb_url, // 已是脱敏态（***），用户修改后实际传明文
+    remote_path: m.remote_path ?? "",
+    mount_point: m.mount_point,
+    uid: m.uid ?? 0,
+    gid: m.gid ?? 0,
+  };
+}
+function cancelEditSMBMount() {
+  smbEditingId.value = null;
+  smbEditDraft.value = null;
+}
+async function saveEditSMBMount() {
+  if (!smbEditDraft.value || smbEditingId.value === null) return;
+  const err = validateSMBEdit();
+  if (err) {
+    toast.error(err);
+    return;
+  }
+  smbEditBusy.value = true;
+  try {
+    const d = smbEditDraft.value;
+    const updated = await updateSMBMount(smbEditingId.value, {
+      name: d.name.trim(),
+      smb_url: d.smb_url.trim(),
+      remote_path: d.remote_path.trim() || undefined,
+      mount_point: d.mount_point.trim(),
+      uid: d.uid,
+      gid: d.gid,
+    });
+    smbMounts.value = smbMounts.value.map((m) =>
+      m.id === smbEditingId.value ? updated : m,
+    );
+    smbEditingId.value = null;
+    smbEditDraft.value = null;
+    toast.success("已保存并重新挂载");
+  } catch (e) {
+    toast.error(getApiErrorMessage(e, "保存失败"));
+  } finally {
+    smbEditBusy.value = false;
   }
 }
 
@@ -876,8 +975,13 @@ onUnmounted(() => {
             />
             <AppInput v-model="smbNewRemotePath" placeholder="共享内子目录（可选）" class="config-input" />
             <AppInput v-model="smbNewMountPoint" placeholder="容器内挂载点（/mnt/nas-root/...）" class="config-input" />
+            <p v-if="smbNewInvalid" class="row-hint nas-mount-error">{{ smbNewInvalid }}</p>
             <div class="row-actions">
-              <AppButton type="button" variant="primary" :disabled="smbMountCreating" @click="createSMBMountNow">
+              <AppButton
+                type="button" variant="primary"
+                :disabled="smbMountCreating || !!smbNewInvalid"
+                @click="createSMBMountNow"
+              >
                 {{ smbMountCreating ? "挂载中…" : "保存并挂载" }}
               </AppButton>
               <AppButton type="button" variant="ghost" @click="smbMountFormOpen = false">取消</AppButton>
@@ -901,36 +1005,70 @@ onUnmounted(() => {
             </thead>
             <tbody>
               <tr v-for="m in smbMounts" :key="m.id">
-                <td>{{ m.name }}</td>
-                <td class="path-cell" :title="m.smb_url">{{ m.smb_url }}</td>
-                <td class="path-cell" :title="m.mount_point">{{ m.mount_point }}</td>
-                <td>
-                  <AdminStatusPill :status="smbStateTone(m.state)" :label="smbStateLabel(m.state)" />
-                  <p v-if="m.last_error" class="nas-mount-error" :title="m.last_error">{{ m.last_error }}</p>
-                </td>
-                <td class="actions-cell">
-                  <AppButton
-                    v-if="m.state !== 'mounted'"
-                    type="button"
-                    variant="ghost"
-                    :disabled="smbMountBusyId === m.id"
-                    @click="mountSMBMountById(m.id, m.name)"
-                  >
-                    {{ smbMountBusyId === m.id ? "挂载中…" : "挂载" }}
-                  </AppButton>
-                  <AppButton
-                    v-else
-                    type="button"
-                    variant="ghost"
-                    :disabled="smbMountBusyId === m.id"
-                    @click="unmountSMBMountById(m.id, m.name)"
-                  >
-                    {{ smbMountBusyId === m.id ? "卸载中…" : "卸载" }}
-                  </AppButton>
-                  <AppButton type="button" variant="ghost" :disabled="smbMountBusyId === m.id" @click="deleteSMBMountById(m.id, m.name)">
-                    删除
-                  </AppButton>
-                </td>
+                <template v-if="smbEditingId === m.id && smbEditDraft">
+                  <!-- [edit-smb-todo] 行内编辑态：6 字段 + 保存/取消 -->
+                  <td><AppInput v-model="smbEditDraft.name" placeholder="名称" class="config-input" /></td>
+                  <td><AppInput v-model="smbEditDraft.smb_url" placeholder="smb://user:pass@host/share" class="config-input" /></td>
+                  <td>
+                    <AppInput v-model="smbEditDraft.mount_point" placeholder="/mnt/nas-xxx" class="config-input" />
+                    <p v-if="validateSMBEdit()" class="row-hint nas-mount-error">{{ validateSMBEdit() }}</p>
+                  </td>
+                  <td>
+                    <AdminStatusPill :status="smbStateTone(m.state)" :label="smbStateLabel(m.state)" />
+                    <p class="row-hint">保存将重新挂载</p>
+                  </td>
+                  <td class="actions-cell">
+                    <AppButton
+                      type="button" variant="primary"
+                      :disabled="smbEditBusy || !!validateSMBEdit()"
+                      @click="saveEditSMBMount"
+                    >
+                      {{ smbEditBusy ? "保存中…" : "保存" }}
+                    </AppButton>
+                    <AppButton type="button" variant="ghost" :disabled="smbEditBusy" @click="cancelEditSMBMount">
+                      取消
+                    </AppButton>
+                  </td>
+                </template>
+                <template v-else>
+                  <td>{{ m.name }}</td>
+                  <td class="path-cell" :title="m.smb_url">{{ m.smb_url }}</td>
+                  <td class="path-cell" :title="m.mount_point">{{ m.mount_point }}</td>
+                  <td>
+                    <AdminStatusPill :status="smbStateTone(m.state)" :label="smbStateLabel(m.state)" />
+                    <p v-if="m.last_error" class="nas-mount-error" :title="m.last_error">{{ m.last_error }}</p>
+                  </td>
+                  <td class="actions-cell">
+                    <AppButton
+                      type="button" variant="ghost"
+                      :disabled="smbMountBusyId === m.id || smbEditingId !== null"
+                      @click="startEditSMBMount(m)"
+                    >
+                      编辑
+                    </AppButton>
+                    <AppButton
+                      v-if="m.state !== 'mounted'"
+                      type="button"
+                      variant="ghost"
+                      :disabled="smbMountBusyId === m.id || smbEditingId !== null"
+                      @click="mountSMBMountById(m.id, m.name)"
+                    >
+                      {{ smbMountBusyId === m.id ? "挂载中…" : "挂载" }}
+                    </AppButton>
+                    <AppButton
+                      v-else
+                      type="button"
+                      variant="ghost"
+                      :disabled="smbMountBusyId === m.id || smbEditingId !== null"
+                      @click="unmountSMBMountById(m.id, m.name)"
+                    >
+                      {{ smbMountBusyId === m.id ? "卸载中…" : "卸载" }}
+                    </AppButton>
+                    <AppButton type="button" variant="ghost" :disabled="smbMountBusyId === m.id || smbEditingId !== null" @click="deleteSMBMountById(m.id, m.name)">
+                      删除
+                    </AppButton>
+                  </td>
+                </template>
               </tr>
             </tbody>
           </table>
@@ -953,6 +1091,16 @@ onUnmounted(() => {
             </AppButton>
             <AppButton type="button" variant="ghost" :disabled="!nasNewPath || nasTestingPath" @click="testNewPath">
               {{ nasTestingPath ? "检测中…" : "测试路径" }}
+            </AppButton>
+            <!-- [edit-smb-todo] 一键建源：从已挂载 SMB 选一个，自动填名称+路径 -->
+            <AppButton
+              type="button"
+              variant="ghost"
+              :disabled="mountedCount === 0"
+              :title="mountedCount === 0 ? '请先在 ① 添加 SMB 挂载并完成挂载' : '从已挂载 SMB 选一个'"
+              @click="openQuickAddFromSMB"
+            >
+              <i class="fas fa-bolt" /> 从已挂载 SMB 一键建源
             </AppButton>
           </div>
           <!-- [V7 §9.4+ 扩展 G18] 实时预览：debounce 300ms 后展示"映射成什么" -->
@@ -1212,6 +1360,57 @@ onUnmounted(() => {
           </tr>
         </tbody>
       </table>
+    </AppModal>
+
+    <!-- [edit-smb-todo] 一键建源选择器 -->
+    <AppModal
+      :open="quickAddPickerOpen"
+      title="从已挂载 SMB 一键建源"
+      size="sm"
+      @close="quickAddPickerOpen = false"
+    >
+      <p class="settings-help">选择一个已挂载的 SMB 共享，自动填入「名称」「容器内路径」到下方添加媒体源表单。</p>
+      <table class="nas-table" style="margin-top: 12px;">
+        <thead>
+          <tr>
+            <th></th>
+            <th>名称</th>
+            <th>容器内挂载点</th>
+            <th>是否已建源</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="m in smbMounts.filter(x => x.state === 'mounted')"
+            :key="m.id"
+            :class="{ 'is-disabled': nasSources.some(s => s.path === m.mount_point) }"
+          >
+            <td>
+              <input
+                type="radio"
+                name="quick-add-mount"
+                :value="m.id"
+                :checked="quickAddMountId === m.id"
+                @change="quickAddMountId = m.id"
+              />
+            </td>
+            <td>{{ m.name }}</td>
+            <td class="path-cell">{{ m.mount_point }}</td>
+            <td>
+              <span v-if="nasSources.some(s => s.path === m.mount_point)" class="settings-help">已建源</span>
+              <span v-else class="settings-help">未建源</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="row-actions" style="margin-top: 12px;">
+        <AppButton
+          type="button" variant="primary"
+          :disabled="quickAddMountId === null"
+          @click="applyQuickAdd"
+        >使用此挂载建源</AppButton>
+        <AppButton type="button" variant="ghost" @click="quickAddPickerOpen = false">取消</AppButton>
+      </div>
     </AppModal>
   </div>
 </template>
