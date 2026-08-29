@@ -95,7 +95,16 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	}
 	dst := req.MountPoint
 
-	// 先确保挂载点存在
+	// [V7 §9.4+ 真实部署修复] mount 前清理 cifs 内核 stale 缓存。
+	// 用户实测：手工 mount.cifs 立即 ls=218 文件；后端走 service.Mount
+	// （已重试 8×500ms=4 秒）仍报 "mount_point is empty"。cifs 内核在
+	// 反复 mount→umount→mount 失败后缓存了 anonymous 凭据视图，需要
+	// 主动 umount + 重建目录才能恢复。
+	if mounted, _ := m.IsMounted(dst); mounted {
+		_ = exec.CommandContext(context.Background(), "umount", "-l", dst).Run()
+		time.Sleep(500 * time.Millisecond)
+	}
+	// 先确保挂载点存在（递归建）
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return fmt.Errorf("smbmount: mkdir mountpoint: %w", err)
 	}
