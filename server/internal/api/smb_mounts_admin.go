@@ -130,7 +130,7 @@ func (h *smbMountAdminHandlers) create(w http.ResponseWriter, r *http.Request) {
 		GID        int    `json:"gid"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, domain.Wrap(domain.CodeValidation, err))
+		writeErr(w, domain.Errorf(domain.CodeValidation, "请求体 JSON 解析失败: %s", err.Error()))
 		return
 	}
 	m := &domain.SMBMount{
@@ -176,7 +176,7 @@ func (h *smbMountAdminHandlers) update(w http.ResponseWriter, r *http.Request) {
 		GID        *int    `json:"gid,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, domain.Wrap(domain.CodeValidation, err))
+		writeErr(w, domain.Errorf(domain.CodeValidation, "请求体 JSON 解析失败: %s", err.Error()))
 		return
 	}
 	if body.Name != nil {
