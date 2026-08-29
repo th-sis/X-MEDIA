@@ -69,16 +69,21 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 		return errors.New("smbmount: smb_url and mount_point are required")
 	}
 	user, pass := resolveSMBCreds(req)
+	// [V7 §9.4+ 真实部署修复] TrueNAS / 现代 SMB 服务器默认 ntlmssp 认证。
+	// kernel.cifs 客户端默认 sec=ntlm 在新服务器上被拒，mount.cifs 静默成功但拿到匿名空视图
+	// （DB state=mounted 但 ls /mnt/... 是空——典型 root cause）。
+	// 实测：mount.cifs ... -o sec=ntlmssp,uid=0,gid=0 在 TrueNAS Asia-Movie 上 ls 出 218 个真实条目。
+	// 不强制 vers= 让客户端自动协商（强制 vers=3.0 反而被 TrueNAS 拒绝）。
 	var opts string
 	if user == "" {
-		opts = fmt.Sprintf("guest,uid=%d,gid=%d,iocharset=utf8,vers=3.0", req.UID, req.GID)
+		opts = fmt.Sprintf("guest,uid=%d,gid=%d,iocharset=utf8,sec=ntlmssp", req.UID, req.GID)
 	} else {
 		credFile, cleanup, err := writeCredentialsFile(user, pass)
 		if err != nil {
 			return err
 		}
 		defer cleanup()
-		opts = fmt.Sprintf("credentials=%s,uid=%d,gid=%d,iocharset=utf8,vers=3.0", credFile, req.UID, req.GID)
+		opts = fmt.Sprintf("credentials=%s,uid=%d,gid=%d,iocharset=utf8,sec=ntlmssp", credFile, req.UID, req.GID)
 	}
 
 	// 构造 source: //host/share[/sub/...]
@@ -104,6 +109,20 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("smbmount: mount.cifs %s -> %s failed: %v (%s)", source, dst, err, strings.TrimSpace(string(out)))
+	}
+	// [V7 §9.4+ 真实部署修复] mount.cifs 静默成功后立即校验目录可读。
+	// ACL 拒绝时内核可能给匿名 read-only 0 字节视图（root cause 实测）。
+	// ReadDir 失败/空时 UpdateRuntime 应记 error 而非 mounted — 防止「DB state=mounted 但实际空」状态漂移。
+	entries, readErr := os.ReadDir(dst)
+	if readErr != nil {
+		// 立即回滚挂载，避免污染 kernel mount table
+		_ = exec.CommandContext(ctx, "umount", dst).Run()
+		return fmt.Errorf("smbmount: mount succeeded but ReadDir failed: %w (mount.cifs 可能因 sec/auth 不匹配拿到匿名空视图)", readErr)
+	}
+	if len(entries) == 0 {
+		// 空视图也回滚 — 用户意图是看到真实内容
+		_ = exec.CommandContext(ctx, "umount", dst).Run()
+		return errors.New("smbmount: mount succeeded but mount_point is empty — 通常是 SMB 认证机制不匹配 (TrueNAS 需 sec=ntlmssp) 或共享 ACL 拒绝该账号")
 	}
 	return nil
 }
