@@ -120,9 +120,9 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	// mount.cifs ... ; ls 立即成功是因为人眼反应有时间差。代码里我们需主动等几轮让内核完成 mount。
 	// [实测] 加 sleep 后测试：手工 mount + 立即 ls 有概率拿空（用户报告过同样症状）。
 	const (
-		readAttempts   = 4
-		readBackoff    = 250 * time.Millisecond
-		minDirEntries  = 1
+		readAttempts  = 8
+		readBackoff   = 500 * time.Millisecond
+		minDirEntries = 1
 	)
 	var entries []os.DirEntry
 	var readErr error
@@ -141,7 +141,7 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	if len(entries) == 0 {
 		// 空视图也回滚 — 用户意图是看到真实内容
 		_ = exec.CommandContext(context.Background(), "umount", dst).Run()
-		return errors.New("smbmount: mount succeeded but mount_point is empty after retries — 通常是 SMB 认证机制不匹配 (TrueNAS 需 sec=ntlmssp) 或共享 ACL 拒绝该账号")
+		return errors.New("smbmount: mount succeeded but mount_point is empty after 8 retries — 通常是 SMB 认证机制不匹配 (TrueNAS 需 sec=ntlmssp) 或共享 ACL 拒绝该账号")
 	}
 	return nil
 }
