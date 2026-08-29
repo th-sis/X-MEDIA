@@ -22,9 +22,6 @@ import {
   testNASPath,
   bulkNASHealth,
   reresolveNASPaths,
-  fetchNASMounts,
-  deleteNASMount,
-  probeNASMounts,
   resolveNASPath,
   fetchSMBMounts,
   createSMBMount,
@@ -36,8 +33,6 @@ import {
   type StateSnapshot,
   type NASSource,
   type NASTestPathResult,
-  type NASMount,
-  type NASDetectedMount,
   type NASResolveResult,
   type SMBMount,
   type SMBMountCreatePayload,
@@ -87,12 +82,6 @@ const nasBusyId = ref<number | null>(null);
 const nasNewName = ref("");
 const nasNewPath = ref("");
 const nasTestResult = ref<NASTestPathResult | null>(null);
-// [V7 §9.4+ 扩展 G18] NAS 主机路径 → 容器路径 映射管理状态
-const nasMounts = ref<NASMount[]>([]);
-const nasDetected = ref<NASDetectedMount[]>([]);
-const nasMountsLoading = ref(false);
-const nasProbeBusy = ref(false);
-const nasDeleteMountBusy = ref<string | null>(null);
 // [76007b2 UI-first] 存量路径批量重映射
 const nasReresolveBusy = ref(false);
 // [V7 §9.4 UI-first] 容器内 SMB 挂载点管理（特权 mount.cifs）状态
@@ -159,66 +148,88 @@ const nasInaccessibleCount = computed(
   () => nasSources.value.filter((s) => s.last_accessibility === "not_accessible").length,
 );
 
-// [实测回归 重新设计] 系统诊断三态 — NAS 配置页顶部诊断卡的依据：
-//   no_mount   容器内无任何 SMB 挂载 → 展示部署三步指令（Docker 硬约束，
-//              volume 只能容器创建时挂载，忘设变量时这是唯一断点）
-//   fixable    已挂载但存在不可达源 → 「一键修复」(reresolve 会即时回写健康)
-//   ok         全部可达
-const mountDetectedCount = computed(() => nasDetected.value.length);
-const diagState = computed<"no_mount" | "fixable" | "ok" | "empty">(() => {
-  if (nasSources.value.length === 0) return "empty";
-  if (mountDetectedCount.value === 0) return "no_mount";
-  if (nasInaccessibleCount.value > 0) return "fixable";
-  return "ok";
+// [V7 §9.4 UI-first] 工作流向导状态条：引导用户从「① 挂载」走到「③ 扫描」
+//   smbStep    未挂载 / 已挂载
+//   srcStep    未配置 / 有不可达 / 全部可达（不可达时需要重映射）
+//   scanStep   未扫描 / 扫描中 / 已扫描
+const mountedCount = computed(() => smbMounts.value.filter((m) => m.state === "mounted").length);
+const smbStepTone = computed<"success" | "warning" | "pending">(() => {
+  if (smbMounts.value.length === 0) return "pending";
+  if (mountedCount.value === smbMounts.value.length) return "success";
+  return "warning";
 });
-const deployHintText =
-  'export NAS_MEDIA_PATH=/mnt/BTORAGE\ndocker compose pull && docker compose up -d --force-recreate xmedia';
-async function copyDeployHint() {
-  try {
-    await navigator.clipboard.writeText(deployHintText);
-    toast.success("已复制部署命令");
-  } catch {
-    toast.error("复制失败，请手动选择文本复制");
-  }
-}
+const smbStepLabel = computed(() => {
+  if (smbMounts.value.length === 0) return "① 添加 SMB 挂载";
+  if (mountedCount.value === smbMounts.value.length) return "① 已挂载";
+  return "① 存在未挂载";
+});
+const srcStepLabel = computed(() => {
+  if (nasSources.value.length === 0) return "② 添加媒体源";
+  if (nasInaccessibleCount.value > 0) return `② ${nasInaccessibleCount.value} 个不可达`;
+  return "② 全部可达";
+});
+const srcStepTone = computed<"success" | "warning" | "pending">(() => {
+  if (nasSources.value.length === 0) return "pending";
+  if (nasInaccessibleCount.value > 0) return "warning";
+  return "success";
+});
+const scanStepLabel = computed(() => {
+  if (scanning.value) return "③ 扫描中…";
+  if (indexedTotal.value > 0) return `③ 已索引 ${indexedTotal.value}`;
+  return "③ 待扫描";
+});
+const scanStepTone = computed<"success" | "warning" | "pending">(() => {
+  if (scanning.value) return "pending";
+  if (indexedTotal.value > 0) return "success";
+  return "pending";
+});
+
+// 「批量重新映射路径」按钮的可用性：仅当存在媒体源且容器内已有 SMB 挂载点时才有意义
+const canReresolve = computed(() => nasSources.value.length > 0 && mountedCount.value > 0);
+
+// 主挂载点：用于"添加媒体源"的 placeholder 提示 + 批量重映射文案
+// 取第一个已挂载 SMB 的 mount_point，否则退化为挂载列表第一个
+const primaryMountPoint = computed(() => {
+  const mounted = smbMounts.value.find((m) => m.state === "mounted");
+  if (mounted) return mounted.mount_point;
+  return smbMounts.value[0]?.mount_point ?? "";
+});
+
+// ② 添加媒体源 placeholder：动态显示当前主挂载点前缀
+const addSourcePlaceholder = computed(() => {
+  const mp = primaryMountPoint.value;
+  return mp
+    ? `容器内绝对路径（如 ${mp}/Asia-Movie）`
+    : "请先在 ① 添加 SMB 挂载";
+});
+
+// ③ 扫描可用性：必须至少有一个媒体源 + 一个已挂载
+const canScan = computed(() => nasSources.value.length > 0 && mountedCount.value > 0);
 
 let pollTimer: number | null = null;
 
 async function loadAll() {
   loading.value = true;
   nasLoading.value = true;
-  // [V7 整改 E3] fetchSnapshot 必须自带 .catch(null) —— 否则任何 /api/state/snapshot
-  // 500 都让整页 reject, 其它 tab 跟着 "请求失败 (500)" 假象拖垮 (Promise.all 短路语义)。
-  // 正确做法: 每个 promise 各自 catch 返回零值, 这里只用 Promise.all 拿顺序, 不让它 reject。
-  // 对比: DashboardManagement.vue 用 Promise.allSettled 走同条接口, 没有这个 bug。
   try {
-    const [snap, h, cfg, nasList, mountsView, smbList] = await Promise.all([
+    const [snap, h, cfg, nasList, smbList] = await Promise.all([
       fetchSnapshot().catch(() => null),
       fetchHealth().catch(() => null),
       fetchXMediaConfigs().catch(() => ({})),
       fetchNASSources().catch(() => []),
-      // [V7 §9.4+ 扩展 G18] mount map 拉取（容错，失败不阻塞主流程）
-      fetchNASMounts().catch(() => null),
       // [V7 §9.4 UI-first] 容器内 SMB 挂载点列表（容错）
       fetchSMBMounts().catch(() => []),
     ]);
-    // null-safe 赋值: 任一接口失败时不污染其它状态
     if (snap) snapshot.value = snap;
     if (h) health.value = h;
     if (cfg) configs.value = cfg;
     if (nasList) nasSources.value = nasList;
-    if (mountsView) {
-      // 服务端无 configured 字段时容错
-      nasMounts.value = mountsView.configured ?? [];
-      nasDetected.value = mountsView.detected ?? [];
-    }
     if (smbList) smbMounts.value = smbList;
   } catch (e) {
     toast.error(getApiErrorMessage(e, "状态读取失败"));
   } finally {
     loading.value = false;
     nasLoading.value = false;
-    // [P2#7] 同步 LRU 配置到本地 ref
     syncLRUFromConfigs();
   }
 }
@@ -308,35 +319,6 @@ async function runBulkHealth() {
     toast.error(getApiErrorMessage(e, "批量检测失败"));
   } finally {
     nasBulkHealthBusy.value = false;
-  }
-}
-
-// ===== [V7 §9.4+ 扩展 G18] NAS 主机路径 → 容器路径 映射操作 =====
-
-async function probeNASMountsNow() {
-  nasProbeBusy.value = true;
-  try {
-    const res = await probeNASMounts();
-    nasDetected.value = res.detected ?? [];
-    toast.success(`已重新探测 ${res.count} 个挂载点`);
-  } catch (e) {
-    toast.error(getApiErrorMessage(e, "重新探测失败"));
-  } finally {
-    nasProbeBusy.value = false;
-  }
-}
-
-async function deleteNASMountByHost(hostPath: string) {
-  if (!confirm(`确认删除主机路径映射 "${hostPath}"？`)) return;
-  nasDeleteMountBusy.value = hostPath;
-  try {
-    await deleteNASMount(hostPath);
-    nasMounts.value = nasMounts.value.filter((m) => m.host_path !== hostPath);
-    toast.success("已删除映射");
-  } catch (e) {
-    toast.error(getApiErrorMessage(e, "删除映射失败"));
-  } finally {
-    nasDeleteMountBusy.value = null;
   }
 }
 
@@ -848,64 +830,33 @@ onUnmounted(() => {
     </div>
 
     <div v-show="activeTab === NAS_TAB">
-      <!-- 系统诊断卡：把"为什么不可用"和"下一步做什么"放在页面 C 位 -->
-      <SettingsCard title="NAS 系统诊断">
-        <!-- 状态一：容器未挂载 NAS 卷 -->
-        <div v-if="diagState === 'no_mount'" class="nas-diag nas-diag--danger">
-          <p class="nas-diag__title">
-            <i class="fas fa-triangle-exclamation" />
-            未检测到 NAS 挂载 — 这是路径不可达 / 扫描为空的根因
-          </p>
-          <p class="nas-diag__desc">
-            可在下方「SMB 挂载点」直接添加并自动挂载；或按以下命令在 NAS 主机上挂载，完成后点击「重新检测」：
-          </p>
-          <pre class="nas-diag__cmd">{{ deployHintText }}</pre>
-          <div class="row-actions" style="margin-top: 8px;">
-            <AppButton type="button" variant="ghost" @click="copyDeployHint">
-              <i class="fas fa-copy" /> 复制命令
-            </AppButton>
-            <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
-              {{ nasReresolveBusy ? "重试中…" : "重新检测" }}
-            </AppButton>
-          </div>
+      <!-- [V7 §9.4 UI-first] 工作流向导：状态条 + ① SMB 挂载 → ② 媒体源 → ③ 扫描 -->
+      <!-- 顶部状态条：永远显示当前进度，用户一眼看到卡在第几步 -->
+      <div class="nas-stepper" role="list">
+        <div class="nas-step" :class="`is-${smbStepTone}`" role="listitem">
+          <i class="fas fa-server" />
+          <span>{{ smbStepLabel }}</span>
+          <span v-if="smbMounts.length > 0" class="nas-step__count">
+            ({{ mountedCount }}/{{ smbMounts.length }})
+          </span>
         </div>
-        <!-- 状态二：已挂载但存在不可达源 -->
-        <div v-else-if="diagState === 'fixable'" class="nas-diag nas-diag--warn">
-          <p class="nas-diag__title">
-            <i class="fas fa-wrench" />
-            {{ nasInaccessibleCount }} 个媒体源不可达
-          </p>
-          <p class="nas-diag__desc">
-            路径可能仍为主机视角。点击「批量重新映射」自动改写并刷新可达性；若仍不可达，请检查路径是否存在。
-          </p>
-          <div class="row-actions" style="margin-top: 8px;">
-            <AppButton type="button" variant="primary" :disabled="nasReresolveBusy" @click="runReresolve">
-              {{ nasReresolveBusy ? "修复中…" : "一键修复路径映射" }}
-            </AppButton>
-          </div>
+        <i class="fas fa-chevron-right nas-step__sep" />
+        <div class="nas-step" :class="`is-${srcStepTone}`" role="listitem">
+          <i class="fas fa-folder-tree" />
+          <span>{{ srcStepLabel }}</span>
+          <span v-if="nasSources.length > 0" class="nas-step__count">
+            ({{ nasSources.length - nasInaccessibleCount }}/{{ nasSources.length }})
+          </span>
         </div>
-        <!-- 状态三：全部可达 -->
-        <div v-else-if="diagState === 'ok'" class="nas-diag nas-diag--ok">
-          <p class="nas-diag__title"><i class="fas fa-circle-check" /> 全部媒体源可访问</p>
-          <p class="nas-diag__desc">可达性每 5 分钟自动复测；现在可以执行「全量扫描」建立索引。</p>
+        <i class="fas fa-chevron-right nas-step__sep" />
+        <div class="nas-step" :class="`is-${scanStepTone}`" role="listitem">
+          <i class="fas fa-magnifying-glass" />
+          <span>{{ scanStepLabel }}</span>
         </div>
-        <!-- 无源：引导添加 -->
-        <div v-else class="nas-diag nas-diag--warn">
-          <p class="nas-diag__title"><i class="fas fa-circle-info" /> 尚未配置媒体源</p>
-          <p class="nas-diag__desc">填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别挂载并监测可达性。</p>
-        </div>
-      </SettingsCard>
+      </div>
 
-      <!-- 容器内 SMB 挂载点管理：填 smb:// URL + 容器内挂载点，后端自动 mount.cifs，重启自动重挂。 -->
-      <SettingsCard title="SMB 挂载点" :loading="smbMountsLoading">
-        <SettingsRow label="说明">
-          <p class="row-hint">
-            填入 SMB 共享地址（如 <code>smb://user:pass@192.168.7.154/BTORAGE</code>）与容器内挂载点
-            （如 <code>/mnt/nas-root/Asia-Movie</code>），保存后自动挂载并持久化，容器重启后自动重挂。
-            挂载成功即可在下方「NAS 媒体源」按容器内路径添加源；无密共享可用 <code>//host/share</code> 格式。
-          </p>
-        </SettingsRow>
-
+      <!-- ① SMB 共享挂载：填 smb:// URL + 容器内挂载点，后端自动 mount.cifs，重启自动重挂。 -->
+      <SettingsCard title="① SMB 共享挂载" :loading="smbMountsLoading">
         <SettingsRow label="新建挂载">
           <div v-if="!smbMountFormOpen" class="row-actions">
             <AppButton type="button" variant="primary" @click="smbMountFormOpen = true">
@@ -919,7 +870,7 @@ onUnmounted(() => {
             <AppInput v-model="smbNewName" placeholder="名称（如 Asia-Movie）" class="config-input" />
             <AppInput
               v-model="smbNewURL"
-              placeholder="SMB URL（smb://user:pass@host/share 或 //host/share）"
+              placeholder="SMB 地址（smb://user:pass@host/share 或 //host/share）"
               class="config-input"
               style="min-width: 320px;"
             />
@@ -936,7 +887,7 @@ onUnmounted(() => {
 
         <SettingsRow label="挂载点列表">
           <div v-if="smbMounts.length === 0" class="nas-empty">
-            暂无 SMB 挂载点。可直接在上方添加，或通过 docker-compose 在部署侧挂载 NAS 卷（系统会自动探测）。
+            尚未添加 SMB 挂载点。点击上方「添加 SMB 挂载」填入共享地址与容器内挂载点，挂载成功后即可在下方 ② 添加媒体源。
           </div>
           <table v-else class="nas-table">
             <thead>
@@ -986,86 +937,14 @@ onUnmounted(() => {
         </SettingsRow>
       </SettingsCard>
 
-      <!-- 映射详情属于高级内容，折叠收起 -->
-      <details class="nas-advanced">
-        <summary>高级：主机路径 → 容器路径映射</summary>
-      <SettingsCard title="主机路径映射" :loading="nasMountsLoading">
-        <SettingsRow label="操作">
-          <div class="row-actions">
-            <AppButton type="button" variant="ghost" :disabled="nasProbeBusy" @click="probeNASMountsNow">
-              {{ nasProbeBusy ? "探测中…" : "重新探测挂载" }}
-            </AppButton>
-            <AppButton type="button" variant="ghost" :disabled="nasMountsLoading" @click="loadAll">
-              刷新列表
-            </AppButton>
-          </div>
-          <p class="row-hint">
-            添加媒体源时输入主机路径即可，后端按「手动映射 → 自动探测 → SMB 别名推导」的优先级自动改写为容器内路径，下方有实时预览。
-          </p>
-        </SettingsRow>
-
-        <SettingsRow label="手动映射">
-          <div v-if="nasMounts.length === 0" class="nas-empty">
-            暂无手动映射。主机路径会按"自动探测"规则处理。
-          </div>
-          <table v-else class="nas-table">
-            <thead>
-              <tr>
-                <th>主机路径</th>
-                <th>容器内路径</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in nasMounts" :key="m.host_path">
-                <td class="path-cell" :title="m.host_path">{{ m.host_path }}</td>
-                <td class="path-cell" :title="m.container_path">{{ m.container_path }}</td>
-                <td class="actions-cell">
-                  <AppButton
-                    type="button"
-                    variant="ghost"
-                    :disabled="nasDeleteMountBusy === m.host_path"
-                    @click="deleteNASMountByHost(m.host_path)"
-                  >
-                    {{ nasDeleteMountBusy === m.host_path ? "删除中…" : "删除" }}
-                  </AppButton>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </SettingsRow>
-
-        <SettingsRow label="自动探测（仅展示）">
-          <div v-if="nasDetected.length === 0" class="nas-empty">
-            暂无自动探测到的 SMB/cifs 挂载。点击"重新探测挂载"试试。
-          </div>
-          <table v-else class="nas-table">
-            <thead>
-              <tr>
-                <th>挂载点</th>
-                <th>文件系统</th>
-                <th>源</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(d, idx) in nasDetected" :key="`${d.mount_target}-${idx}`">
-                <td class="path-cell" :title="d.mount_target">{{ d.mount_target }}</td>
-                <td>{{ d.filesystem }}</td>
-                <td class="path-cell" :title="d.source">{{ d.source }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </SettingsRow>
-      </SettingsCard>
-      </details>
-
-      <SettingsCard title="NAS 媒体源" :loading="nasLoading">
+      <!-- ② NAS 媒体源：路径前缀来自 ① 已挂载的容器内挂载点；可一次性批量重映射 -->
+      <SettingsCard title="② NAS 媒体源" :loading="nasLoading">
         <SettingsRow label="添加媒体源">
           <div class="nas-add-row">
             <AppInput v-model="nasNewName" placeholder="名称（可读标识）" class="config-input" />
             <AppInput
               v-model="nasNewPath"
-              placeholder="主机路径（绝对路径，如 /mnt/BTORAGE，自动映射）"
+              :placeholder="addSourcePlaceholder"
               class="config-input"
               @input="scheduleResolvePreview"
             />
@@ -1109,9 +988,30 @@ onUnmounted(() => {
           </div>
         </SettingsRow>
 
+        <SettingsRow label="批量操作">
+          <div class="row-actions">
+            <!-- [76007b2 UI-first] 存量路径一键改写为容器内路径；前置条件：① 至少有一个已挂载点 -->
+            <AppButton
+              type="button"
+              variant="ghost"
+              :disabled="nasReresolveBusy || !canReresolve"
+              :title="canReresolve ? '将所有媒体源路径改写到当前 SMB 挂载点前缀' : '请先在 ① 添加 SMB 挂载并完成挂载'"
+              @click="runReresolve"
+            >
+              {{ nasReresolveBusy ? "重映射中…" : "批量重新映射路径" }}
+            </AppButton>
+            <AppButton type="button" variant="ghost" :disabled="nasBulkHealthBusy" @click="runBulkHealth">
+              {{ nasBulkHealthBusy ? "检测中…" : "全部可访问性检测" }}
+            </AppButton>
+          </div>
+          <p class="row-hint">
+            「批量重新映射」用于把历史上以主机视角保存的路径一键改写到当前 SMB 挂载点前缀（如 <code>/mnt/BTORAGE/*</code> → <code>{{ primaryMountPoint || '/mnt/nas-root' }}/*</code>）；可达性每 5 分钟自动复测。
+          </p>
+        </SettingsRow>
+
         <SettingsRow label="媒体源列表">
           <div v-if="nasSources.length === 0" class="nas-empty">
-            尚未配置 NAS 媒体源，在上方添加后即可扫描。
+            尚未配置 NAS 媒体源，先在 ① 完成 SMB 挂载，再回到此处添加源。
           </div>
           <table v-else class="nas-table">
             <thead>
@@ -1147,8 +1047,11 @@ onUnmounted(() => {
             </tbody>
           </table>
         </SettingsRow>
+      </SettingsCard>
 
-        <SettingsRow label="扫描与健康检查">
+      <!-- ③ 扫描 -->
+      <SettingsCard title="③ 索引扫描">
+        <SettingsRow label="操作">
           <div class="row-actions">
             <AppButton type="button" variant="primary" :disabled="scanning" @click="triggerScan('full')">
               {{ scanning ? "扫描中…" : "全量扫描" }}
@@ -1156,19 +1059,15 @@ onUnmounted(() => {
             <AppButton type="button" variant="ghost" :disabled="scanning" @click="triggerScan('incremental')">
               {{ scanning ? "扫描中…" : "增量扫描" }}
             </AppButton>
-            <AppButton type="button" variant="ghost" :disabled="nasBulkHealthBusy" @click="runBulkHealth">
-              {{ nasBulkHealthBusy ? "检测中…" : "全部可访问性检测" }}
-            </AppButton>
-            <!-- [76007b2 UI-first] 历史宿主视角路径一键改写为容器内路径 -->
-            <AppButton type="button" variant="ghost" :disabled="nasReresolveBusy" @click="runReresolve">
-              {{ nasReresolveBusy ? "重映射中…" : "批量重新映射路径" }}
-            </AppButton>
           </div>
-          <p class="row-hint" v-if="nasSources.length === 0">
-            ⚠ 当前没有 NAS 媒体源。请先在上方填入真实 SMB 路径（如 /mnt/BTORAGE/Asia-Movie），系统会自动识别挂载并完成映射入库。
+          <p class="row-hint" v-if="!canScan">
+            请先完成 ① SMB 挂载和 ② 媒体源添加，再开始扫描。
+          </p>
+          <p class="row-hint" v-else-if="nasInaccessibleCount > 0">
+            仍有 {{ nasInaccessibleCount }} 个媒体源不可达，「批量重新映射」后再扫描。
           </p>
           <p class="row-hint" v-else>
-            可达性每 5 分钟自动复测；「全部可访问性检测」会同时统计文件数，「批量重新映射路径」用于修复历史保存的主机视角路径。
+            可随时重跑全量/增量扫描；扫描中按钮会自动禁用。
           </p>
         </SettingsRow>
       </SettingsCard>
@@ -1233,9 +1132,9 @@ onUnmounted(() => {
           </AppButton>
           <AppButton
             type="button" size="sm" variant="ghost" class="row-action-btn"
-            :disabled="nasProbeBusy" @click="probeNASMountsNow"
+            :disabled="smbMountsLoading" @click="refreshSMBMountsNow"
           >
-            {{ nasProbeBusy ? "探测中…" : "重新探测" }}
+            {{ smbMountsLoading ? "校准中…" : "校准挂载" }}
           </AppButton>
         </SettingsRow>
         <SettingsRow label="索引">
@@ -1379,60 +1278,50 @@ onUnmounted(() => {
   color: var(--color-text-secondary, #6b7280);
   font-size: 13px;
 }
-/* [实测回归·重新设计] NAS 系统诊断卡 */
-.nas-diag {
-  padding: 12px 14px;
+/* [V7 §9.4 UI-first] NAS 工作流向导 status bar */
+.nas-stepper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+  background: var(--color-bg-elevated, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--color-border, rgba(0, 0, 0, 0.06));
   border-radius: 8px;
-  border: 1px solid transparent;
 }
-.nas-diag--danger {
-  background: rgba(220, 38, 38, 0.1);
-  border-color: rgba(220, 38, 38, 0.35);
-}
-.nas-diag--warn {
-  background: rgba(217, 119, 6, 0.1);
-  border-color: rgba(217, 119, 6, 0.35);
-}
-.nas-diag--ok {
-  background: rgba(0, 200, 100, 0.1);
-  border-color: rgba(0, 200, 100, 0.3);
-}
-.nas-diag__title {
-  font-weight: 600;
-  margin: 0 0 6px;
-}
-.nas-diag--danger .nas-diag__title { color: #dc2626; }
-.nas-diag--warn .nas-diag__title { color: #d97706; }
-.nas-diag--ok .nas-diag__title { color: #059669; }
-.nas-diag__desc {
-  margin: 0 0 4px;
-  color: var(--color-text-secondary, #9ca3af);
+.nas-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
   font-size: 13px;
-  line-height: 1.6;
+  font-weight: 500;
+  background: rgba(120, 120, 120, 0.08);
+  color: var(--color-text-secondary, #6b7280);
 }
-.nas-diag__cmd {
-  margin: 8px 0;
-  padding: 10px 12px;
-  background: rgba(0, 0, 0, 0.35);
-  border-radius: 6px;
+.nas-step.is-success {
+  background: rgba(0, 200, 100, 0.12);
+  color: #047857;
+}
+.nas-step.is-warning {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+}
+.nas-step.is-pending {
+  background: rgba(120, 120, 120, 0.12);
+  color: #4b5563;
+}
+.nas-step__count {
+  font-size: 11px;
+  opacity: 0.85;
   font-family: ui-monospace, SFMono-Regular, monospace;
-  font-size: 13px;
-  white-space: pre-wrap;
-  word-break: break-all;
 }
-/* 高级折叠区 */
-.nas-advanced {
-  margin-top: 12px;
-}
-.nas-advanced > summary {
-  cursor: pointer;
+.nas-step__sep {
   color: var(--color-text-secondary, #9ca3af);
-  font-size: 13px;
-  padding: 6px 0;
-  user-select: none;
-}
-.nas-advanced > summary:hover {
-  color: var(--color-text-primary, #e5e7eb);
+  font-size: 11px;
+  opacity: 0.6;
 }
 /* [V7 §9.4+ 扩展 G18] NAS 媒体源 CRUD 表格样式 */
 .nas-status-line {
