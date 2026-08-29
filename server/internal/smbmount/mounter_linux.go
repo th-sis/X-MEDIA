@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // execMounter 是生产实现 — 走 mount.cifs (需要 root + CAP_SYS_ADMIN).
@@ -113,16 +114,34 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	// [V7 §9.4+ 真实部署修复] mount.cifs 静默成功后立即校验目录可读。
 	// ACL 拒绝时内核可能给匿名 read-only 0 字节视图（root cause 实测）。
 	// ReadDir 失败/空时 UpdateRuntime 应记 error 而非 mounted — 防止「DB state=mounted 但实际空」状态漂移。
-	entries, readErr := os.ReadDir(dst)
+	//
+	// 关键: mount.cifs exec 退出 ≠ 用户空间立即可读。CombinedOutput 阻塞等进程退出，但 cifs 内核
+	// 模块可能还在建立 SMB 会话（特别是 NTLMSSP 握手多一个 round trip）。实测用户手动 mount
+	// mount.cifs ... ; ls 立即成功是因为人眼反应有时间差。代码里我们需主动等几轮让内核完成 mount。
+	// [实测] 加 sleep 后测试：手工 mount + 立即 ls 有概率拿空（用户报告过同样症状）。
+	const (
+		readAttempts   = 4
+		readBackoff    = 250 * time.Millisecond
+		minDirEntries  = 1
+	)
+	var entries []os.DirEntry
+	var readErr error
+	for attempt := 1; attempt <= readAttempts; attempt++ {
+		entries, readErr = os.ReadDir(dst)
+		if readErr == nil && len(entries) >= minDirEntries {
+			break // 真正挂载成功且目录可读
+		}
+		time.Sleep(readBackoff)
+	}
 	if readErr != nil {
 		// 立即回滚挂载，避免污染 kernel mount table
-		_ = exec.CommandContext(ctx, "umount", dst).Run()
-		return fmt.Errorf("smbmount: mount succeeded but ReadDir failed: %w (mount.cifs 可能因 sec/auth 不匹配拿到匿名空视图)", readErr)
+		_ = exec.CommandContext(context.Background(), "umount", dst).Run()
+		return fmt.Errorf("smbmount: mount succeeded but ReadDir failed after %d attempts: %w (mount.cifs 可能因 sec/auth 不匹配拿到匿名空视图)", readAttempts, readErr)
 	}
 	if len(entries) == 0 {
 		// 空视图也回滚 — 用户意图是看到真实内容
-		_ = exec.CommandContext(ctx, "umount", dst).Run()
-		return errors.New("smbmount: mount succeeded but mount_point is empty — 通常是 SMB 认证机制不匹配 (TrueNAS 需 sec=ntlmssp) 或共享 ACL 拒绝该账号")
+		_ = exec.CommandContext(context.Background(), "umount", dst).Run()
+		return errors.New("smbmount: mount succeeded but mount_point is empty after retries — 通常是 SMB 认证机制不匹配 (TrueNAS 需 sec=ntlmssp) 或共享 ACL 拒绝该账号")
 	}
 	return nil
 }
