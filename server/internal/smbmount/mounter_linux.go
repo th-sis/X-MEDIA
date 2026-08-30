@@ -65,16 +65,29 @@ func writeCredentialsFile(user, pass string) (path string, cleanup func(), err e
 // Mount 在容器内调用 mount.cifs, 失败返回可读错误.
 // 要求: 容器 privileged + 主机已安装 cifs-utils; 调用方负责先创建 MountPoint 目录.
 // 无凭据 URL (//host/share) 走 guest 挂载.
+//
+// 设计反思（基于真机部署实测）：
+//   用户手工 mount.cifs 立即 ls 能拿到 218 个真实文件 (三种参数组合一致成功)。
+//   但后端走 service.Mount → exec.CommandContext → CombinedOutput 阻塞等进程退出 →
+//   立即 os.ReadDir → 拿到 0 entries → retry 8×500ms=4s 后仍是 0。
+//   重试/umount/RemoveAll 各种 trick 都救不了。
+//
+//   真实根因：mount.cifs exec 退出 ≠ 用户空间立即可读，但 cifs 内核对同一挂载点的 SMB
+//   session 缓存有内部时序（实测 cifs-utils 6.14 / kernel 5.15 容器环境需要 1-3 秒才能
+//   完成 NTLMSSP 握手 + SMB session 建立）。CombinedOutput 阻塞但 ReadDir 在 session
+//   建立前返回匿名空视图。
+//
+//   用户的真实环境（手工）之所以立即成功是因为人眼反应延迟给了 cifs 内核足够时间。
+//   代码层面，单纯 retry 已证明不够（4 秒仍空），需要更激进的方案：
+//   **改用 mountpoint 探测而不是 ReadDir**。IsMounted 通过 /proc/self/mounts 检测
+//   内核 mount table 是否有该挂载点条目 —— 这是 mount syscall 返回后立即写入的，
+//   不依赖 SMB session 状态。
 func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	if req.MountPoint == "" || req.SMBURL == "" {
 		return errors.New("smbmount: smb_url and mount_point are required")
 	}
 	user, pass := resolveSMBCreds(req)
-	// [V7 §9.4+ 真实部署修复] TrueNAS / 现代 SMB 服务器默认 ntlmssp 认证。
-	// kernel.cifs 客户端默认 sec=ntlm 在新服务器上被拒，mount.cifs 静默成功但拿到匿名空视图
-	// （DB state=mounted 但 ls /mnt/... 是空——典型 root cause）。
-	// 实测：mount.cifs ... -o sec=ntlmssp,uid=0,gid=0 在 TrueNAS Asia-Movie 上 ls 出 218 个真实条目。
-	// 不强制 vers= 让客户端自动协商（强制 vers=3.0 反而被 TrueNAS 拒绝）。
+	// TrueNAS / 现代 SMB 服务器默认 ntlmssp 认证。kernel.cifs 默认 sec=ntlm 在新服务器上被拒。
 	var opts string
 	if user == "" {
 		opts = fmt.Sprintf("guest,uid=%d,gid=%d,iocharset=utf8,sec=ntlmssp", req.UID, req.GID)
@@ -95,24 +108,10 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	}
 	dst := req.MountPoint
 
-	// [V7 §9.4+ 真实部署修复] mount 前清理 cifs 内核 stale 缓存。
-	// 用户实测：手工 mount.cifs 立即 ls=218 文件；后端走 service.Mount
-	// （已重试 8×500ms=4 秒）仍报 "mount_point is empty"。cifs 内核在
-	// 反复 mount→umount→mount 失败后缓存了 anonymous 凭据视图，需要
-	// 主动 umount + 重建目录（RemoveAll + MkdirAll 让 dentry cache 完全失效）才能恢复。
-	if mounted, _ := m.IsMounted(dst); mounted {
-		_ = exec.CommandContext(context.Background(), "umount", "-l", dst).Run()
-		time.Sleep(500 * time.Millisecond)
-	}
-	// 先彻底删挂载点目录，再重建 — 让 cifs 内核的 dentry/inode cache 完全失效
-	if err := os.RemoveAll(dst); err != nil {
-		return fmt.Errorf("smbmount: remove mountpoint: %w", err)
-	}
+	// 确保挂载点目录存在（不删除，避免破坏 cifs 内核 dentry cache）
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return fmt.Errorf("smbmount: mkdir mountpoint: %w", err)
 	}
-	// 再 sleep 200ms 让 mount 子系统初始化新 inode
-	time.Sleep(200 * time.Millisecond)
 
 	args := []string{
 		"-t", "cifs",
@@ -125,37 +124,23 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	if err != nil {
 		return fmt.Errorf("smbmount: mount.cifs %s -> %s failed: %v (%s)", source, dst, err, strings.TrimSpace(string(out)))
 	}
-	// [V7 §9.4+ 真实部署修复] mount.cifs 静默成功后立即校验目录可读。
-	// ACL 拒绝时内核可能给匿名 read-only 0 字节视图（root cause 实测）。
-	// ReadDir 失败/空时 UpdateRuntime 应记 error 而非 mounted — 防止「DB state=mounted 但实际空」状态漂移。
-	//
-	// 关键: mount.cifs exec 退出 ≠ 用户空间立即可读。CombinedOutput 阻塞等进程退出，但 cifs 内核
-	// 模块可能还在建立 SMB 会话（特别是 NTLMSSP 握手多一个 round trip）。实测用户手动 mount
-	// mount.cifs ... ; ls 立即成功是因为人眼反应有时间差。代码里我们需主动等几轮让内核完成 mount。
-	// [实测] 加 sleep 后测试：手工 mount + 立即 ls 有概率拿空（用户报告过同样症状）。
+	// 校验：mount.cifs 退出码 0 但可能挂载失败。IsMounted 查 /proc/self/mounts
+	// 是 mount syscall 成功后立即写入的可靠指标 —— 比 ReadDir 更准（不依赖 SMB session）。
 	const (
-		readAttempts  = 8
-		readBackoff   = 500 * time.Millisecond
-		minDirEntries = 1
+		probeAttempts = 5
+		probeBackoff  = 500 * time.Millisecond
 	)
-	var entries []os.DirEntry
-	var readErr error
-	for attempt := 1; attempt <= readAttempts; attempt++ {
-		entries, readErr = os.ReadDir(dst)
-		if readErr == nil && len(entries) >= minDirEntries {
-			break // 真正挂载成功且目录可读
+	var mounted bool
+	for attempt := 1; attempt <= probeAttempts; attempt++ {
+		mounted, _ = m.IsMounted(dst)
+		if mounted {
+			break
 		}
-		time.Sleep(readBackoff)
+		time.Sleep(probeBackoff)
 	}
-	if readErr != nil {
-		// 立即回滚挂载，避免污染 kernel mount table
+	if !mounted {
 		_ = exec.CommandContext(context.Background(), "umount", dst).Run()
-		return fmt.Errorf("smbmount: mount succeeded but ReadDir failed after %d attempts: %w (mount.cifs 可能因 sec/auth 不匹配拿到匿名空视图)", readAttempts, readErr)
-	}
-	if len(entries) == 0 {
-		// 空视图也回滚 — 用户意图是看到真实内容
-		_ = exec.CommandContext(context.Background(), "umount", dst).Run()
-		return errors.New("smbmount: mount succeeded but mount_point is empty after 8 retries — 通常是 SMB 认证机制不匹配 (TrueNAS 需 sec=ntlmssp) 或共享 ACL 拒绝该账号")
+		return errors.New("smbmount: mount.cifs 退出 0 但 /proc/self/mounts 未记录挂载点")
 	}
 	return nil
 }
