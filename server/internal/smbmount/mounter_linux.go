@@ -99,15 +99,20 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	// 用户实测：手工 mount.cifs 立即 ls=218 文件；后端走 service.Mount
 	// （已重试 8×500ms=4 秒）仍报 "mount_point is empty"。cifs 内核在
 	// 反复 mount→umount→mount 失败后缓存了 anonymous 凭据视图，需要
-	// 主动 umount + 重建目录才能恢复。
+	// 主动 umount + 重建目录（RemoveAll + MkdirAll 让 dentry cache 完全失效）才能恢复。
 	if mounted, _ := m.IsMounted(dst); mounted {
 		_ = exec.CommandContext(context.Background(), "umount", "-l", dst).Run()
 		time.Sleep(500 * time.Millisecond)
 	}
-	// 先确保挂载点存在（递归建）
+	// 先彻底删挂载点目录，再重建 — 让 cifs 内核的 dentry/inode cache 完全失效
+	if err := os.RemoveAll(dst); err != nil {
+		return fmt.Errorf("smbmount: remove mountpoint: %w", err)
+	}
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return fmt.Errorf("smbmount: mkdir mountpoint: %w", err)
 	}
+	// 再 sleep 200ms 让 mount 子系统初始化新 inode
+	time.Sleep(200 * time.Millisecond)
 
 	args := []string{
 		"-t", "cifs",
