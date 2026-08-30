@@ -118,11 +118,15 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 		"-o", opts,
 		source, dst,
 	}
-	cmd := exec.CommandContext(ctx, m.mountBin, args...)
+	// [V7 §9.4+ 真实部署修复] 加 -v 看 SMB 握手详细日志。
+	// 用户实测"mount.cifs 退出 0 但 /proc/self/mounts 未记录"——可能是 cifs 内核
+	// 拒绝 mount 但 mount.cifs 工具吞掉 stderr 没报告。加 verbose 把完整 cifs 内核日志
+	// 透出到我们的错误信息，方便用户排查。
+	cmd := exec.CommandContext(ctx, m.mountBin, append([]string{"-v"}, args...)...)
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("smbmount: mount.cifs %s -> %s failed: %v (%s)", source, dst, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("smbmount: mount.cifs -v %s -> %s failed: %v (%s)", source, dst, err, strings.TrimSpace(string(out)))
 	}
 	// 校验：mount.cifs 退出码 0 但可能挂载失败。IsMounted 查 /proc/self/mounts
 	// 是 mount syscall 成功后立即写入的可靠指标 —— 比 ReadDir 更准（不依赖 SMB session）。
@@ -140,7 +144,7 @@ func (m *execMounter) Mount(ctx context.Context, req MountRequest) error {
 	}
 	if !mounted {
 		_ = exec.CommandContext(context.Background(), "umount", dst).Run()
-		return errors.New("smbmount: mount.cifs 退出 0 但 /proc/self/mounts 未记录挂载点")
+		return fmt.Errorf("smbmount: mount.cifs -v 退出 0 但 /proc/self/mounts 未记录挂载点。verbose 输出:\n%s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }
